@@ -19,7 +19,7 @@
       document.documentElement.dataset.mode = mode;
     })();
   </script>
-  <link rel="stylesheet" href="/styles.css?v=12" />
+  <link rel="stylesheet" href="/styles.css?v=9" />
 </head>
 <body>
   <div class="wrap">
@@ -30,7 +30,6 @@
         <nav id="pages" class="switch pages" aria-label="Pages">
           <a class="switch-btn on" href="#overview">Overview</a>
           <a class="switch-btn" href="#log">Trades</a>
-          <a class="switch-btn" href="#insights">Insights</a>
           <a class="switch-btn" href="#settings">Settings</a>
         </nav>
       </div>
@@ -42,10 +41,7 @@
 
     <div id="page-overview">
     <section id="metrics" class="metrics" aria-label="Account totals"></section>
-    <section class="session-panel" aria-label="Forex trading sessions">
-      <div class="session-head"><div><h2>Market Sessions</h2><p class="sub">Live session hours · aligned to your local time</p></div><span id="session-market-status" class="session-market-status"></span></div>
-      <div id="session-clocks" class="session-clocks"></div>
-    </section>
+    <section id="terminals" class="terminals" aria-label="Terminals"></section>
 
     <section class="dashboard" aria-label="Dashboard">
       <div class="dash-head">
@@ -63,24 +59,27 @@
         </div>
       </div>
       <div class="dash-grid">
-        <div class="dash-left">
+        <div>
           <div id="calendar"></div>
-          <article class="dash-card cumulative-card">
-            <div class="chart-heading">
-              <h3>Cumulative</h3>
-              <label class="chart-mode-label">Display
-                <select id="cumulative-mode" aria-label="Cumulative chart display">
-                  <option value="profit">Raw profit</option>
-                  <option value="percent">Percentage</option>
-                </select>
-              </label>
-            </div>
-            <div class="chart-wrap"><div id="curve"></div><div id="curve-tip" class="chart-tip" hidden></div></div>
-          </article>
         </div>
         <div class="dash-charts">
-          <article class="dash-card"><h3>Day by day</h3><div id="daily-bars"></div></article>
-          <article class="dash-card"><h3>By symbol</h3><div id="symbol-bars"></div></article>
+          <h3>Day by day</h3>
+          <div id="daily-bars"></div>
+          <div class="chart-heading">
+            <h3>Cumulative</h3>
+            <label class="chart-mode-label">Display
+              <select id="cumulative-mode" aria-label="Cumulative chart display">
+                <option value="profit">Raw profit</option>
+                <option value="percent">Percentage</option>
+              </select>
+            </label>
+          </div>
+          <div class="chart-wrap">
+            <div id="curve"></div>
+            <div id="curve-tip" class="chart-tip" hidden></div>
+          </div>
+          <h3>By symbol</h3>
+          <div id="symbol-bars"></div>
         </div>
       </div>
     </section>
@@ -176,25 +175,8 @@
       </div>
     </div>
 
-    <div id="page-insights" hidden>
-      <section class="insights-page">
-        <div class="insights-heading"><div><h2>Trading Insights</h2><p class="sub">Uses closed-trade net P/L for the selected account. Weekday uses close time; session and time-of-day use entry time, in your local timezone.</p></div><span id="insights-count" class="sub"></span></div>
-        <div class="insights-grid">
-          <article class="insight-card"><h3>Profit / Loss by Day of Week</h3><div id="weekday-insight"></div></article>
-          <article class="insight-card"><h3>Profit / Loss by Trading Session</h3><div id="session-insight"></div></article>
-          <article class="insight-card insight-wide"><h3>Profit / Loss by Time of Day</h3><p class="sub">Based on trade entry time, in your local timezone.</p><div id="time-insight"></div></article>
-        </div>
-      </section>
-    </div>
-
     <div id="page-settings" hidden>
       <section class="settings-page">
-        <div>
-          <h2>Trading Accounts & Terminals</h2>
-          <p class="sub">Connection status and account details for detected MetaTrader 5 terminals.</p>
-        </div>
-        <section id="settings-terminals" class="terminals" aria-label="Trading accounts and terminals"></section>
-        <div class="settings-divider"></div>
         <div>
           <h2>Appearance</h2>
           <p class="sub">Choose a theme and display mode for your journal.</p>
@@ -231,6 +213,6 @@
       </section>
     </div>
   </div>
-  <script src="/app.js?v=19"></script>
+  <script src="/app.js?v=17"></script>
 </body>
 </html>

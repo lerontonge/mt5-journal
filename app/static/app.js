@@ -1,18 +1,13 @@
 const filters = {
   range: "30",
   status: "all",
-  account: localStorage.getItem("journal-account") || "all",
+  account: "all",
   q: "",
   day: "",
 };
 
-const view = (() => {
-  const now = new Date();
-  const saved = (localStorage.getItem("journal-view") || "").split("-").map(Number);
-  return saved.length === 2 && saved[0] >= 2000 && saved[0] <= 2100 && saved[1] >= 0 && saved[1] <= 11
-    ? { year: saved[0], month: saved[1] } : { year: now.getFullYear(), month: now.getMonth() };
-})();
-let reviewPeriod = ["day","week","month","d90","year","custom"].includes(localStorage.getItem("journal-review-period")) ? localStorage.getItem("journal-review-period") : "month";
+const view = { year: new Date().getFullYear(), month: new Date().getMonth() };
+let reviewPeriod = "month";
 let chartModel = null;
 
 function paint(name) {
@@ -247,7 +242,7 @@ function instancesFor(account) {
 function renderTerminals() {
   const accounts = scopedAccounts();
   if (!accounts.length && !state.terminals.length) {
-    $("settings-terminals").innerHTML = `<article class="terminal"><strong>No terminals</strong><p>Start MetaTrader 5 on this PC. The journal picks up every terminal64.exe.</p></article>`;
+    $("terminals").innerHTML = `<article class="terminal"><strong>No terminals</strong><p>Start MetaTrader 5 on this PC. The journal picks up every terminal64.exe.</p></article>`;
     return;
   }
   const cards = accounts.map((account) => {
@@ -271,7 +266,7 @@ function renderTerminals() {
       cards.push(`<article class="terminal off"><span class="meta"><i class="dot"></i>${esc(terminal.label)}</span><strong>Not connected</strong><p>${esc(terminal.error || "Waiting for a login")}</p></article>`);
     }
   }
-  $("settings-terminals").innerHTML = cards.join("");
+  $("terminals").innerHTML = cards.join("");
 }
 
 function renderAccountSwitch() {
@@ -296,16 +291,14 @@ function renderAccountSwitch() {
 }
 
 function pageName() {
-  return ["#log", "#insights", "#news", "#settings"].includes(location.hash) ? location.hash.slice(1) : "overview";
+  return ["#log", "#settings"].includes(location.hash) ? location.hash.slice(1) : "overview";
 }
 
 function showPage(name) {
   const log = name === "log";
   const settings = name === "settings";
-  const insights = name === "insights";
-  $("page-overview").hidden = log || settings || insights;
+  $("page-overview").hidden = log || settings;
   $("page-log").hidden = !log;
-  $("page-insights").hidden = !insights;
   $("page-settings").hidden = !settings;
   document.querySelectorAll("#pages a").forEach((link) => {
     const on = link.getAttribute("href") === `#${name}`;
@@ -317,21 +310,17 @@ function showPage(name) {
     renderTable();
     renderEditor();
   }
-  if (insights) renderInsights();
-  if (settings) renderTerminals();
 }
 
 function applyAccount(key) {
   if (filters.account === key) return;
   filters.account = key;
-  localStorage.setItem("journal-account", key);
   filters.day = "";
   dashStamp = "";
   tableStamp = "";
   renderAccountSwitch();
   renderMetrics();
   renderTerminals();
-  renderInsights();
   renderDashboard();
   renderTable();
   renderReview();
@@ -903,9 +892,6 @@ function monthDays() {
 
 function renderDashboard() {
   const days = monthDays();
-  const nowDate = new Date();
-  const chartDays = view.year === nowDate.getFullYear() && view.month === nowDate.getMonth()
-    ? days.slice(0, nowDate.getDate()) : days;
   const stamp = `${view.year}-${view.month}|${filters.account}|${filters.day}|${curveMode}|${hideClosed}|${days.map((day) => `${day.net.toFixed(2)}:${day.count}`).join(",")}`;
   if (stamp === dashStamp) return;
   dashStamp = stamp;
@@ -917,8 +903,8 @@ function renderDashboard() {
   const now = new Date();
   $("month-next").disabled = view.year > now.getFullYear() || (view.year === now.getFullYear() && view.month >= now.getMonth());
   $("calendar").innerHTML = calendarHtml(days);
-  $("daily-bars").innerHTML = dailyBars(chartDays);
-  $("curve").innerHTML = curveSvg(chartDays);
+  $("daily-bars").innerHTML = dailyBars(days);
+  $("curve").innerHTML = curveSvg(days);
   $("symbol-bars").innerHTML = symbolBars(days);
   renderDayChip();
 }
@@ -1014,14 +1000,6 @@ function curveSvg(days) {
   const padB = 26;
   let min = Math.min(0, ...points);
   let max = Math.max(0, ...points);
-  if (curveMode === "percent") {
-    max = Math.max(0, max) + 5;
-    min = Math.min(0, min) - 5;
-  } else {
-    const span = Math.max(1, max - min);
-    max += span * 0.05;
-    min -= span * 0.05;
-  }
   if (min === max) { min -= 1; max += 1; }
   const x = (index) => padL + (index / (points.length - 1)) * (width - padL - padR);
   const y = (value) => padT + (1 - (value - min) / (max - min)) * (height - padT - padB);
@@ -1157,149 +1135,15 @@ function breakdown(trades, keyFn) {
   </table>`;
 }
 
-
-const SESSION_DEFS = [
-  { name: "New York", zone: "America/New_York", open: 8, close: 17, city: "New York, USA", kind: "forex" },
-  { name: "London", zone: "Europe/London", open: 8, close: 17, city: "London, UK", kind: "forex" },
-  { name: "Asia · Tokyo", zone: "Asia/Tokyo", open: 9, close: 18, city: "Tokyo, Japan", kind: "forex" },
-  { name: "Gold · COMEX", zone: "America/New_York", open: 8.3333, close: 13.5, city: "New York, USA", kind: "exchange" },
-  { name: "NASDAQ", zone: "America/New_York", open: 9.5, close: 16, city: "New York, USA", kind: "equity" },
-  { name: "S&P 500", zone: "America/New_York", open: 9.5, close: 16, city: "New York, USA", kind: "equity" },
-];
-
-function zonedParts(date, zone) {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: zone, weekday: "short", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", hourCycle: "h23" }).formatToParts(date);
-  const out = {};
-  for (const part of parts) if (part.type !== "literal") out[part.type] = part.value;
-  return { weekday: out.weekday, year: +out.year, month: +out.month, day: +out.day, hour: +out.hour, minute: +out.minute };
-}
-function easterSunday(year) {
-  const a=year%19,b=Math.floor(year/100),c=year%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),month=Math.floor((h+l-7*m+114)/31),day=((h+l-7*m+114)%31)+1;
-  return new Date(Date.UTC(year, month-1, day));
-}
-function nthWeekday(year, monthIndex, weekday, nth) {
-  const first = new Date(Date.UTC(year, monthIndex, 1)).getUTCDay();
-  return 1 + ((weekday - first + 7) % 7) + (nth - 1) * 7;
-}
-function lastWeekday(year, monthIndex, weekday) {
-  const last = new Date(Date.UTC(year, monthIndex + 1, 0));
-  return last.getUTCDate() - ((last.getUTCDay() - weekday + 7) % 7);
-}
-function isMarketHoliday(parts, sessionName) {
-  const {year,month,day}=parts;
-  const dateKey=`${year}-${month}-${day}`;
-  const easter=easterSunday(year);
-  const goodFriday=new Date(easter.getTime()-2*86400000);
-  const easterMonday=new Date(easter.getTime()+86400000);
-  const key=(d)=>`${d.getUTCFullYear()}-${d.getUTCMonth()+1}-${d.getUTCDate()}`;
-  if (dateKey===`${year}-1-1` || dateKey===`${year}-12-25` || dateKey===`${year}-12-26` || dateKey===key(goodFriday)) return true;
-  if (["New York", "NASDAQ", "S&P 500", "Gold · COMEX"].includes(sessionName)) {
-    const usDates = [
-      `1-${nthWeekday(year,0,1,3)}`, `2-${nthWeekday(year,1,1,3)}`,
-      `5-${lastWeekday(year,4,1)}`, `6-19`, `7-4`,
-      `9-${nthWeekday(year,8,1,1)}`, `11-${nthWeekday(year,10,4,4)}`
-    ];
-    if (usDates.includes(`${month}-${day}`)) return true;
-  }
-  if (sessionName === "London") {
-    const ukDates = [`${easterMonday.getUTCMonth()+1}-${easterMonday.getUTCDate()}`, `5-${nthWeekday(year,4,1,1)}`, `5-${lastWeekday(year,4,1)}`, `8-${lastWeekday(year,7,1)}`];
-    if (ukDates.includes(`${month}-${day}`)) return true;
-  }
-  if (sessionName === "Asia · Tokyo" && (month===1&&day===1 || month===2&&day===11 || month===2&&day===23 || month===4&&day===29 || month===5&&[3,4,5].includes(day) || month===8&&day===11 || month===11&&day===3 || month===11&&day===23)) return true;
-  return false;
-}
-function forexWeekend(now) {
-  const ny=zonedParts(now,"America/New_York");
-  const minutes=ny.hour*60+ny.minute;
-  return (ny.weekday==="Fri" && minutes>=17*60) || ny.weekday==="Sat" || (ny.weekday==="Sun" && minutes<17*60);
-}
-function sessionStatus(def, now) {
-  const parts=zonedParts(now,def.zone);
-  if (forexWeekend(now)) return { status:"Weekend", parts };
-  if (isMarketHoliday(parts,def.name)) return { status:"Holiday", parts };
-  const hour=parts.hour+parts.minute/60;
-  if (hour>=def.open && hour<def.close) return {status:"Open",parts};
-  const preOpen = def.kind === "equity" ? 4 : def.open - 1;
-  const postClose = def.kind === "equity" ? 20 : def.close + 1;
-  if (hour>=preOpen && hour<def.open) return {status:"Pre Market",parts};
-  if (hour>=def.close && hour<postClose) return {status:"Post Market",parts};
-  return {status:"Closed",parts};
-}
-function timezoneOffsetMinutes(date, zone) {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: zone, year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", second:"2-digit", hourCycle:"h23" }).formatToParts(date);
-  const values={}; for (const part of parts) if(part.type!=="literal") values[part.type]=Number(part.value);
-  return (Date.UTC(values.year,values.month-1,values.day,values.hour,values.minute,values.second)-date.getTime())/60000;
-}
-function renderSessionClocks() {
-  const now=new Date();
-  const openCount=SESSION_DEFS.filter(def=>sessionStatus(def,now).status==="Open").length;
-  const localOffset=-now.getTimezoneOffset();
-  const localHour=now.getHours()+now.getMinutes()/60;
-  const labelOffset=window.matchMedia("(max-width: 800px)").matches?95:118;
-  const hourLabels=Array.from({length:25},(_,i)=>`<span>${i===24?"00":String(i).padStart(2,"0")}</span>`).join("");
-  $("session-market-status").textContent=forexWeekend(now)?"Forex market · Weekend closure":`${openCount} of ${SESSION_DEFS.length} markets open`;
-  const rows=SESSION_DEFS.map(def=>{
-    const {status}=sessionStatus(def,now);
-    const zoneOffset=timezoneOffsetMinutes(now,def.zone);
-    const shift=(localOffset-zoneOffset)/60;
-    let left=((def.open+shift)%24+24)%24;
-    let width=def.close-def.open;
-    const firstWidth=Math.min(width,24-left);
-    const secondWidth=width-firstWidth;
-    const colorClass = def.name==="New York"?"new-york":def.name==="London"?"london":def.name==="Asia · Tokyo"?"asia":def.name.startsWith("Gold")?"gold":def.name==="NASDAQ"?"nasdaq":"sp500";
-    const bar=`<span class="session-bar ${colorClass}" style="left:${left/24*100}%;width:${firstWidth/24*100}%"></span>${secondWidth>0?`<span class="session-bar ${colorClass}" style="left:0;width:${secondWidth/24*100}%"></span>`:""}`;
-    const time=new Intl.DateTimeFormat(undefined,{timeZone:def.zone,hour:"2-digit",minute:"2-digit",hour12:true}).format(now);
-    const date=new Intl.DateTimeFormat(undefined,{timeZone:def.zone,weekday:"short",month:"short",day:"numeric"}).format(now);
-    const city=def.name==="Asia · Tokyo"?"Tokyo":def.name;
-    const marketLabel = def.name === "Gold · COMEX" ? "Gold · COMEX" : city;
-    return `<div class="session-row"><div class="session-city"><strong>${esc(marketLabel)}</strong><span class="session-pill ${status.toLowerCase().replace(/\s+/g,"-")}">${esc(status)}</span><small>${time} · ${date}</small></div><div class="session-track" aria-label="${esc(city)} session hours on a 24 hour local timeline">${bar}</div></div>`;
-  }).join("");
-  $("session-clocks").innerHTML=`<div class="session-timeline"><div class="timeline-spacer"></div><div class="timeline-hours">${hourLabels}</div></div><div class="session-rows">${rows}</div><div class="session-now" style="left:calc(${localHour/24*100}% + ${labelOffset*(1-localHour/24)}px)" aria-hidden="true"><span>NOW</span></div><div class="session-legend"><span><i class="legend-dot asia"></i>Asia / Tokyo</span><span><i class="legend-dot london"></i>London</span><span><i class="legend-dot new-york"></i>New York</span><span><i class="legend-dot gold"></i>Gold</span><span><i class="legend-dot nasdaq"></i>NASDAQ</span><span><i class="legend-dot sp500"></i>S&amp;P 500</span><span class="session-local-zone">${esc(Intl.DateTimeFormat().resolvedOptions().timeZone||"Local time")}</span></div>`;
-}
-function sessionForTrade(unix) {
-  const date=new Date(unix*1000);
-  const ny=zonedParts(date,"America/New_York"), london=zonedParts(date,"Europe/London"), tokyo=zonedParts(date,"Asia/Tokyo");
-  if(ny.hour>=8&&ny.hour<17) return "New York";
-  if(london.hour>=8&&london.hour<17) return "London";
-  if(tokyo.hour>=9&&tokyo.hour<18) return "Asia";
-  return "Off-hours";
-}
-function insightBarChart(rows, formatter=money) {
-  if(!rows.length || !rows.some(row=>row.count)) return `<p class="sub">No closed trades available for this grouping.</p>`;
-  const max=Math.max(...rows.map(row=>Math.abs(row.net)),0.01);
-  return `<div class="insight-bars">${rows.map(row=>{const width=Math.max(1,Math.abs(row.net)/max*50);const left=row.net<0?50-width:50;return `<div class="insight-bar-row"><span class="insight-label">${esc(row.label)}</span><div class="insight-track"><i class="insight-fill ${tone(row.net)}" style="left:${left.toFixed(1)}%;width:${width.toFixed(1)}%"></i></div><strong class="insight-value ${tone(row.net)}">${formatter(row.net)}</strong><small>${row.count} trade${row.count===1?"":"s"}</small></div>`;}).join("")}</div>`;
-}
-function renderInsights() {
-  const closed=accountTrades().filter(t=>t.status==="closed"&&t.close_time);
-  $("insights-count").textContent=`${closed.length} closed trades`;
-  const weekdays=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"].map(label=>({label,net:0,count:0}));
-  const sessions=["Asia","London","New York","Off-hours"].map(label=>({label,net:0,count:0}));
-  const buckets=Array.from({length:6},(_,i)=>({label:`${String(i*4).padStart(2,"0")}:00–${String(i*4+4).padStart(2,"0")}:00`,net:0,count:0}));
-  for(const trade of closed){
-    const close=new Date(trade.close_time*1000); const weekday=weekdays[close.getDay()]; weekday.net+=Number(trade.net||0);weekday.count++;
-    const session=sessions.find(row=>row.label===sessionForTrade(trade.open_time||trade.close_time));session.net+=Number(trade.net||0);session.count++;
-    const hour=new Date(trade.open_time*1000).getHours();const bucket=buckets[Math.min(5,Math.floor(hour/4))];bucket.net+=Number(trade.net||0);bucket.count++;
-  }
-  $("weekday-insight").innerHTML=insightBarChart(weekdays);
-  $("session-insight").innerHTML=insightBarChart(sessions);
-  $("time-insight").innerHTML=insightBarChart(buckets);
-}
-
 async function refresh() {
   try {
     const response = await fetch("/api/state");
     if (!response.ok) throw new Error(String(response.status));
     state = await response.json();
-    if (filters.account !== "all" && !state.accounts.some(a => accountKey(a) === filters.account)) {
-      filters.account = "all";
-      localStorage.setItem("journal-account", "all");
-    }
     renderStatus();
     renderAccountSwitch();
     renderMetrics();
     renderTerminals();
-    renderSessionClocks();
-    renderInsights();
     renderTable();
     renderEditor();
     renderDashboard();
@@ -1345,7 +1189,6 @@ function bind() {
     const button = event.target.closest("button[data-period]");
     if (!button || button.dataset.period === reviewPeriod) return;
     reviewPeriod = button.dataset.period;
-    localStorage.setItem("journal-review-period", reviewPeriod);
     if (reviewPeriod === "custom") ensureCustomDates();
     hideChartTip();
     renderReview();
@@ -1421,6 +1264,4 @@ function bind() {
 
 bind();
 refresh();
-renderSessionClocks();
-setInterval(renderSessionClocks, 1000);
 setInterval(refresh, 3000);
