@@ -12,6 +12,16 @@ The page is served only on this machine at http://127.0.0.1:8765. Passwords are 
 
 Two terminals logged into the same account are both shown as connections. Their trades and balances are counted once.
 
+## Display
+
+Themes are Dracula, Desk, Nord, Aurora, and AMOLED Black (near-black, dark only). The font is Inter, bundled in `app/static/fonts`, so nothing loads from the internet.
+
+The eye button at the top of each page hides that page's amounts. Settings has a switch for each group: account balances, closed profit totals, calendar amounts, chart values, review statistics, trade amounts, and insights. Percentages stay visible.
+
+Gold, NASDAQ, and the S&P 500 are shown as 24/5 markets (Sunday 17:00 to Friday 17:00 New York time).
+
+The wolf icon is used for the browser tab, bookmarks, Add to Home Screen, and installing the page as an app.
+
 ## Run
 
 ```bat

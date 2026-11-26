@@ -180,6 +180,40 @@ def script() -> FileResponse:
     return FileResponse(STATIC / "app.js")
 
 
+# Home-screen icons, web manifest and the bundled Inter font. Only these exact names are served.
+ASSETS = {
+    "icon.svg": "image/svg+xml",
+    "icon-192.png": "image/png",
+    "icon-512.png": "image/png",
+    "icon-maskable-512.png": "image/png",
+    "apple-touch-icon.png": "image/png",
+    "favicon-32.png": "image/png",
+    "favicon.ico": "image/x-icon",
+    "manifest.webmanifest": "application/manifest+json",
+}
+FONTS = {
+    "Inter-Regular.woff",
+    "Inter-Medium.woff",
+    "Inter-SemiBold.woff",
+    "Inter-Bold.woff",
+}
+
+
+@app.get("/fonts/{name}")
+def font(name: str) -> FileResponse:
+    if name not in FONTS:
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(STATIC / "fonts" / name, media_type="font/woff")
+
+
+@app.get("/{name}")
+def asset(name: str) -> FileResponse:
+    media_type = ASSETS.get(name)
+    if media_type is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(STATIC / name, media_type=media_type)
+
+
 if __name__ == "__main__":
     import uvicorn
 
