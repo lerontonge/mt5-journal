@@ -108,8 +108,50 @@ const hidden = loadHidden();
 function isHidden(key) {
   return hidden.has(key);
 }
-function amount(key, value) {
-  return hidden.has(key) ? MASK : money(value);
+function amount(key, value, currency) {
+  return hidden.has(key) ? MASK : money(value, currency);
+}
+
+// Display currency. The Eastern Caribbean dollar is pegged at 2.70 XCD per US dollar,
+// so amounts in USD (or US cents) convert with a fixed rate. The choice applies on every page.
+const XCD_RATES = { USD: 2.7, USC: 0.027 };
+let showXcd = localStorage.getItem("journal-currency") === "XCD";
+
+// The account currency the current scope shares, or null when the scope mixes currencies.
+function baseCurrency() {
+  const set = new Set(scopedAccounts().map((account) => (account.currency || "USD").toUpperCase()));
+  if (set.size === 0) return "USD";
+  return set.size === 1 ? [...set][0] : null;
+}
+function xcdRate(currency) {
+  const code = String(currency === undefined ? baseCurrency() || "" : currency || "USD").toUpperCase();
+  return showXcd ? XCD_RATES[code] || 1 : 1;
+}
+function shownCurrency(currency) {
+  const code = String(currency === undefined ? baseCurrency() || "" : currency || "USD").toUpperCase();
+  return showXcd && XCD_RATES[code] ? "XCD" : code;
+}
+function setCurrency(xcd) {
+  if (showXcd === xcd) return;
+  showXcd = xcd;
+  try { localStorage.setItem("journal-currency", xcd ? "XCD" : "base"); } catch (error) {}
+  setHidden([], true);
+}
+function syncCurrencySwitch() {
+  const el = $("currency-switch");
+  if (!el) return;
+  const base = baseCurrency();
+  const convertible = base && XCD_RATES[base];
+  const baseLabel = base === "USC" ? "USD" : base || "Account";
+  el.querySelector('[data-currency="base"]').textContent = baseLabel;
+  el.querySelectorAll("button[data-currency]").forEach((button) => {
+    const on = (button.dataset.currency === "XCD") === showXcd;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+  el.title = convertible
+    ? "Show amounts in Eastern Caribbean dollars (fixed rate 2.70 XCD = 1 USD)"
+    : "XCD conversion is available for USD accounts only";
 }
 function hiddenStamp() {
   return HIDE_KEYS.map((key) => (hidden.has(key) ? "1" : "0")).join("");
@@ -121,6 +163,7 @@ function setHidden(keys, on) {
   }
   try { localStorage.setItem("journal-hidden", JSON.stringify([...hidden])); } catch (error) {}
   syncPrivacyControls();
+  syncCurrencySwitch();
   dashStamp = "";
   tableStamp = "";
   reviewStamp = "";
@@ -149,7 +192,7 @@ function syncPrivacyControls() {
     button.setAttribute("aria-pressed", off ? "true" : "false");
     button.setAttribute("aria-label", `${label} on this page`);
     button.title = `${label} on this page`;
-    button.innerHTML = `${off ? EYE_OFF : EYE_ON}<span>${label}</span>`;
+    button.innerHTML = off ? EYE_OFF : EYE_ON;
   });
   document.querySelectorAll("[data-hide-key]").forEach((button) => {
     const key = button.dataset.hideKey;
@@ -184,8 +227,8 @@ function esc(value) {
   }[ch]));
 }
 
-function money(value) {
-  const n = Number(value || 0);
+function money(value, currency) {
+  const n = Number(value || 0) * xcdRate(currency);
   const sign = n < 0 ? "−" : "";
   return sign + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -300,13 +343,13 @@ function renderMetrics() {
   } else {
     for (const [currency, row] of groups) {
       bits.push(
-        metric("Equity", amount("balance", row.equity), currency),
-        metric("Balance", amount("balance", row.balance), currency),
-        metric("Floating", amount("balance", row.floating), currency, tone(row.floating)),
+        metric("Equity", amount("balance", row.equity, currency), shownCurrency(currency)),
+        metric("Balance", amount("balance", row.balance, currency), shownCurrency(currency)),
+        metric("Floating", amount("balance", row.floating, currency), shownCurrency(currency), tone(row.floating)),
       );
     }
   }
-  bits.push(metric("Closed today", amount("pnl", closedToday), "", tone(closedToday)));
+  bits.push(metric("Closed today", amount("pnl", closedToday), showXcd ? shownCurrency() : "", tone(closedToday)));
   bits.push(metric("Open trades", String(openCount)));
   $("metrics").innerHTML = bits.join("");
 }
@@ -340,7 +383,7 @@ function renderTerminals() {
       <span class="meta">${live ? "Live" : "Offline"} · ${instances.length} terminal${instances.length === 1 ? "" : "s"}</span>
       <strong>${esc(account.name || "Account")}</strong>
       <p>${esc(account.login)} · ${esc(account.server)}</p>
-      <p>${esc(amount("balance", account.equity))} ${esc(account.currency)} equity</p>
+      <p>${esc(amount("balance", account.equity, account.currency))} ${esc(shownCurrency(account.currency))} equity</p>
       <ul class="instances">${lines}</ul>
     </article>`;
   });
@@ -387,7 +430,7 @@ function showPage(name) {
   $("page-log").hidden = !log;
   $("page-insights").hidden = !insights;
   $("page-settings").hidden = !settings;
-  document.querySelectorAll("#pages a").forEach((link) => {
+  document.querySelectorAll("#pages a, #settings-link").forEach((link) => {
     const on = link.getAttribute("href") === `#${name}`;
     link.classList.toggle("on", on);
     if (on) link.setAttribute("aria-current", "page");
@@ -413,6 +456,7 @@ function applyAccount(key) {
   dashStamp = "";
   tableStamp = "";
   renderAccountSwitch();
+  syncCurrencySwitch();
   renderMetrics();
   renderTerminals();
   renderInsights();
@@ -437,14 +481,14 @@ function renderTable() {
   const rows = trades.map((trade) => {
     const marked = trade.note || (trade.tags && trade.tags.length) || trade.rating ? `<span class="mark">●</span>` : "";
     const exit = trade.status === "open" ? `<span class="pill open">open</span>` : esc(trade.exit || "closed");
-    const label = `${trade.account} ${trade.symbol} ${trade.side} ${amount("trades", trade.net)}`;
+    const label = `${trade.account} ${trade.symbol} ${trade.side} ${amount("trades", trade.net, trade.currency)}`;
     return `<tr data-key="${esc(trade.key)}" class="${trade.key === selectedKey ? "selected" : ""}" tabindex="0" role="button" aria-label="${esc(label)}">
       <td>${when(trade.close_time || trade.open_time)}</td>
       ${showAccount ? `<td>${esc(trade.account)}</td>` : ""}
       <td>${esc(trade.symbol)} ${marked}</td>
       <td><span class="pill ${trade.side === "short" ? "short" : ""}">${esc(trade.side)}</span></td>
       <td class="num">${trade.volume.toFixed(2)}</td>
-      <td class="num ${tone(trade.net)}">${amount("trades", trade.net)}</td>
+      <td class="num ${tone(trade.net)}">${amount("trades", trade.net, trade.currency)}</td>
       <td>${exit}</td>
     </tr>`;
   }).join("");
@@ -470,11 +514,11 @@ function paintFacts(trade) {
     ["Magic", trade.magic || "—"],
     ["Entry", price(trade.open_price)],
     ["Exit", price(trade.close_price)],
-    ["Realized", amount("trades", trade.realized)],
-    ["Floating", amount("trades", trade.floating)],
-    ["Commission", amount("trades", trade.commission)],
-    ["Swap", amount("trades", trade.swap)],
-    ["Net", amount("trades", trade.net) + (trade.currency ? ` ${trade.currency}` : "")],
+    ["Realized", amount("trades", trade.realized, trade.currency)],
+    ["Floating", amount("trades", trade.floating, trade.currency)],
+    ["Commission", amount("trades", trade.commission, trade.currency)],
+    ["Swap", amount("trades", trade.swap, trade.currency)],
+    ["Net", amount("trades", trade.net, trade.currency) + (trade.currency ? ` ${shownCurrency(trade.currency)}` : "")],
     ["Exit reason", trade.exit || "—"],
   ];
   if (trade.sl) rows.push(["Stop", price(trade.sl)]);
@@ -821,37 +865,48 @@ function chartWhen(unix) {
   });
 }
 
+function smoothPath(coords) {
+  if (!coords.length) return "";
+  if (coords.length === 1) return `M${coords[0][0].toFixed(1)},${coords[0][1].toFixed(1)}`;
+  let path = `M${coords[0][0].toFixed(1)},${coords[0][1].toFixed(1)}`;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const p0 = coords[Math.max(0, i - 1)], p1 = coords[i], p2 = coords[i + 1], p3 = coords[Math.min(coords.length - 1, i + 2)];
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6, c1y = p1[1] + (p2[1] - p0[1]) / 6;
+    const c2x = p2[0] - (p3[0] - p1[0]) / 6, c2y = p2[1] - (p3[1] - p1[1]) / 6;
+    path += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+  }
+  return path;
+}
+
 function growthChart(points) {
   chartModel = null;
   if (points.length < 2) return `<p class="sub">This view needs at least one closed trade before the growth line can be drawn.</p>`;
-  const width = 760;
-  const height = 250;
-  const padL = 52;
-  const padR = 14;
-  const padT = 16;
-  const padB = 16;
+  const width = 760, height = 250, padL = 58, padR = 14, padT = 16, padB = 28;
   chartModel = { points, width, height, padL, padR, padT, padB };
-  const lows = points.map((point) => -point.drawdown);
-  const highs = points.map((point) => point.growth);
-  let min = Math.min(0, ...lows, ...highs);
-  let max = Math.max(0, ...highs);
-  if (min === max) { min -= 1; max += 1; }
+  const lows = points.map((point) => -point.drawdown), highs = points.map((point) => point.growth);
+  const scale = niceScale(Math.min(0, ...lows, ...highs) - 5, Math.max(0, ...highs) + 5);
+  const { min, max, step, ticks } = scale;
   const x = (index) => padL + (index / (points.length - 1)) * (width - padL - padR);
   const y = (value) => padT + (1 - (value - min) / (max - min)) * (height - padT - padB);
-  const line = (pick) => points.map((point, index) => `${index ? "L" : "M"}${x(index).toFixed(1)},${y(pick(point)).toFixed(1)}`).join(" ");
-  const growth = line((point) => point.growth);
-  const drawdown = line((point) => -point.drawdown);
-  const fill = `${drawdown} L${x(points.length - 1).toFixed(1)},${y(0).toFixed(1)} L${x(0).toFixed(1)},${y(0).toFixed(1)} Z`;
-  const ticks = [max, 0, min];
+  const growthCoords = points.map((point,index) => [x(index),y(point.growth)]);
+  const ddCoords = points.map((point,index) => [x(index),y(-point.drawdown)]);
+  const growth = smoothPath(growthCoords), drawdown = smoothPath(ddCoords), zeroY = y(0);
+  const fill = `${drawdown} L${x(points.length-1).toFixed(1)},${zeroY.toFixed(1)} L${x(0).toFixed(1)},${zeroY.toFixed(1)} Z`;
   const ink = chartInk();
-  const labels = ticks.map((tick) => `<text x="4" y="${(y(tick) + 4).toFixed(1)}" fill="${ink.muted}" font-size="11">${tick.toFixed(1)}%</text>`).join("");
+  const horizontal = ticks.map(tick => `<line x1="${padL}" x2="${width-padR}" y1="${y(tick).toFixed(1)}" y2="${y(tick).toFixed(1)}" stroke="${ink.line}" stroke-width="1"></line>`).join("");
+  const labels = ticks.map(tick => `<text x="${padL-8}" y="${(y(tick)+4).toFixed(1)}" text-anchor="end" fill="${ink.muted}" font-size="11">${axisTick(tick,step,true)}</text>`).join("");
+  const marks=[], stride=Math.max(1,Math.ceil((points.length-1)/6));
+  for(let i=0;i<points.length;i+=stride) marks.push(i);
+  if(marks[marks.length-1]!==points.length-1) marks.push(points.length-1);
+  const vertical=marks.map(i=>`<line x1="${x(i).toFixed(1)}" x2="${x(i).toFixed(1)}" y1="${padT}" y2="${height-padB}" stroke="${ink.line}" stroke-width="1"></line>`).join("");
+  const xLabels=marks.map(i=>`<text x="${x(i).toFixed(1)}" y="${height-7}" text-anchor="middle" fill="${ink.muted}" font-size="10">${esc(new Date(points[i].time*1000).toLocaleDateString(undefined,{month:"short",day:"numeric"}))}</text>`).join("");
   return `<svg class="chart growth-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Growth and drawdown">
-    <line x1="${padL}" x2="${width - padR}" y1="${y(0)}" y2="${y(0)}" stroke="${ink.line}"></line>
-    ${labels}
-    <path d="${fill}" fill="${ink.loss}" opacity="0.35"></path>
-    <path d="${drawdown}" fill="none" stroke="${ink.loss}" stroke-width="1.5"></path>
-    <path d="${growth}" fill="none" stroke="${ink.growth}" stroke-width="2.4"></path>
-    <line id="chart-guide" visibility="hidden" stroke="${ink.accent}" stroke-width="1" y1="${padT}" y2="${height - padB}"></line>
+    <rect x="${padL}" y="${padT}" width="${width-padL-padR}" height="${height-padT-padB}" fill="${ink.flat}" fill-opacity="0.18"></rect>
+    ${horizontal}${vertical}<line x1="${padL}" x2="${width-padR}" y1="${zeroY}" y2="${zeroY}" stroke="${ink.muted}" stroke-opacity="0.7" stroke-dasharray="4 3"></line>
+    ${labels}${xLabels}<path d="${fill}" fill="${ink.loss}" opacity="0.22"></path>
+    <path d="${drawdown}" fill="none" stroke="${ink.loss}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+    <path d="${growth}" fill="none" stroke="${ink.growth}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>
+    <line id="chart-guide" visibility="hidden" stroke="${ink.accent}" stroke-width="1" y1="${padT}" y2="${height-padB}"></line>
   </svg>`;
 }
 
@@ -943,7 +998,7 @@ function renderReview() {
     fxRow("Interest", B(stats.interest), tone(stats.interest)),
     `<div class="fx-label">Drawdown</div>`,
     fxRow("Max drawdown", signedPct(-stats.maxDd), stats.maxDd ? "loss" : ""),
-    fxRow("Max drawdown $", R(-stats.maxDdMoney), stats.maxDdMoney ? "loss" : ""),
+    fxRow(showXcd && xcdRate() !== 1 ? "Max drawdown XCD" : "Max drawdown $", R(-stats.maxDdMoney), stats.maxDdMoney ? "loss" : ""),
     fxRow("Recovery factor", factorText(stats.recovery)),
     fxRow("Absolute drawdown", R(curve.absoluteDd), curve.absoluteDd ? "loss" : ""),
     `<div class="fx-label">Trades</div>`,
@@ -1130,7 +1185,7 @@ function curveSvg(days) {
   const { min, max } = scale;
   const x = (index) => padL + (index / (points.length - 1)) * plotW;
   const y = (value) => padT + (1 - (value - min) / (max - min)) * plotH;
-  const line = points.map((value, index) => `${index ? "L" : "M"}${x(index).toFixed(1)},${y(value).toFixed(1)}`).join(" ");
+  const line = smoothPath(points.map((value,index) => [x(index),y(value)]));
   const fill = `${line} L${x(points.length - 1).toFixed(1)},${y(0).toFixed(1)} L${x(0).toFixed(1)},${y(0).toFixed(1)} Z`;
   const ink = chartInk();
   const color = points[points.length - 1] >= 0 ? ink.gain : ink.loss;
@@ -1355,7 +1410,7 @@ function renderSessionClocks() {
   const localOffset=-now.getTimezoneOffset();
   const localHour=now.getHours()+now.getMinutes()/60;
   const labelOffset=window.matchMedia("(max-width: 800px)").matches?95:118;
-  const hourLabels=Array.from({length:25},(_,i)=>`<span>${i===24?"00":String(i).padStart(2,"0")}</span>`).join("");
+  const hourLabels=Array.from({length:24},(_,i)=>`<span>${String(i).padStart(2,"0")}</span>`).join("");
   $("session-market-status").textContent=forexWeekend(now)?"Forex market · Weekend closure":`${openCount} of ${SESSION_DEFS.length} markets open`;
   const rows=SESSION_DEFS.map(def=>{
     const {status}=sessionStatus(def,now);
@@ -1418,6 +1473,7 @@ async function refresh() {
     }
     renderStatus();
     renderAccountSwitch();
+    syncCurrencySwitch();
     renderMetrics();
     renderTerminals();
     renderSessionClocks();
@@ -1434,7 +1490,13 @@ async function refresh() {
 function bind() {
   syncAppearance();
   syncPrivacyControls();
+  syncCurrencySwitch();
   document.addEventListener("click", (event) => {
+    const cur = event.target.closest("button[data-currency]");
+    if (cur) {
+      setCurrency(cur.dataset.currency === "XCD");
+      return;
+    }
     const eye = event.target.closest("[data-eye-page]");
     if (eye) {
       togglePage(eye.dataset.eyePage);
@@ -1501,6 +1563,13 @@ function bind() {
     else showPage("log");
   });
   window.addEventListener("hashchange", () => showPage(pageName()));
+  // A fresh open of the app always starts on Overview, even if the browser restored
+  // an old #settings link. Reloading the same tab keeps the page you were on.
+  let opened = false;
+  try { opened = sessionStorage.getItem("journal-opened") === "1"; sessionStorage.setItem("journal-opened", "1"); } catch (error) {}
+  if (!opened && location.hash && location.hash !== "#overview") {
+    history.replaceState(null, "", location.pathname + location.search);
+  }
   showPage(pageName());
   $("clear-day").addEventListener("click", () => {
     filters.day = "";

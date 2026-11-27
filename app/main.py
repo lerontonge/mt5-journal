@@ -206,12 +206,21 @@ def font(name: str) -> FileResponse:
     return FileResponse(STATIC / "fonts" / name, media_type="font/woff")
 
 
-@app.get("/{name}")
+# iOS looks for these names at the site root when a page is added to the Home Screen.
+ICON_ALIASES = {
+    "apple-touch-icon-precomposed.png": "apple-touch-icon.png",
+    "apple-touch-icon-180x180.png": "apple-touch-icon.png",
+    "apple-touch-icon-180x180-precomposed.png": "apple-touch-icon.png",
+}
+
+
+@app.api_route("/{name}", methods=["GET", "HEAD"])
 def asset(name: str) -> FileResponse:
+    name = ICON_ALIASES.get(name, name)
     media_type = ASSETS.get(name)
     if media_type is None:
         raise HTTPException(status_code=404, detail="Not found")
-    return FileResponse(STATIC / name, media_type=media_type)
+    return FileResponse(STATIC / name, media_type=media_type, headers={"Cache-Control": "public, max-age=86400"})
 
 
 if __name__ == "__main__":

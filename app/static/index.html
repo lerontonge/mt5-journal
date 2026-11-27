@@ -9,11 +9,11 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Journal" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <link rel="icon" type="image/svg+xml" href="/icon.svg" />
-  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
-  <link rel="alternate icon" href="/favicon.ico" />
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png?v=15" />
+  <link rel="shortcut icon" href="/favicon.ico?v=15" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=15" />
+  <link rel="apple-touch-icon-precomposed" sizes="180x180" href="/apple-touch-icon.png?v=15" />
+  <link rel="manifest" href="/manifest.webmanifest?v=15" />
   <link rel="preload" href="/fonts/Inter-Regular.woff" as="font" type="font/woff" crossorigin />
   <script>
     (function () {
@@ -30,28 +30,34 @@
       document.documentElement.dataset.mode = theme === "amoled" ? "dark" : mode;
     })();
   </script>
-  <link rel="stylesheet" href="/styles.css?v=13" />
+  <link rel="stylesheet" href="/styles.css?v=16" />
 </head>
 <body>
   <div class="wrap">
     <header>
-      <div>
+      <div class="head-main">
         <h1>Trading Journal</h1>
         <nav id="pages" class="switch pages" aria-label="Pages">
           <a class="switch-btn on" href="#overview">Overview</a>
           <a class="switch-btn" href="#log">Trades</a>
           <a class="switch-btn" href="#insights">Insights</a>
-          <a class="switch-btn" href="#settings">Settings</a>
         </nav>
       </div>
       <div class="header-side">
         <div id="account-switch" class="switch" role="group" aria-label="Account"></div>
         <p id="status" class="status">Connecting to terminals…</p>
       </div>
+      <a id="settings-link" class="icon-link" href="#settings" aria-label="Settings" title="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a>
     </header>
 
     <div id="page-overview">
-    <div class="page-bar"><button type="button" class="eye-btn" data-eye-page="overview"></button></div>
+    <div class="page-bar">
+      <div id="currency-switch" class="switch currency-switch" role="group" aria-label="Display currency">
+        <button type="button" class="switch-btn" data-currency="base" aria-pressed="true">USD</button>
+        <button type="button" class="switch-btn" data-currency="XCD" aria-pressed="false">XCD</button>
+      </div>
+      <button type="button" class="eye-btn" data-eye-page="overview"></button>
+    </div>
     <section id="metrics" class="metrics" aria-label="Account totals"></section>
     <section class="session-panel" aria-label="Forex trading sessions">
       <div class="session-head"><div><h2>Market Sessions</h2><p class="sub">Live session hours · aligned to your local time</p></div><span id="session-market-status" class="session-market-status"></span></div>
@@ -117,12 +123,14 @@
           </div>
         </div>
       </div>
-      <h3>Growth and drawdown</h3>
-      <div class="chart-wrap">
-        <div id="growth-chart"></div>
-        <div id="chart-tip" class="chart-tip" hidden></div>
-      </div>
-      <p class="legend"><i class="swatch growth"></i> Growth <i class="swatch drawdown"></i> Drawdown from peak</p>
+      <article class="dash-card review-chart-card">
+        <h3>Growth and drawdown</h3>
+        <div class="chart-wrap">
+          <div id="growth-chart"></div>
+          <div id="chart-tip" class="chart-tip" hidden></div>
+        </div>
+        <p class="legend"><i class="swatch growth"></i> Growth <i class="swatch drawdown"></i> Drawdown from peak</p>
+      </article>
       <div id="review-stats" class="fx-stats"></div>
       <div class="split">
         <div>
@@ -270,6 +278,6 @@
       </section>
     </div>
   </div>
-  <script src="/app.js?v=20"></script>
+  <script src="/app.js?v=22"></script>
 </body>
 </html>
