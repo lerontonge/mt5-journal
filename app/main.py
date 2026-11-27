@@ -18,18 +18,29 @@ from pydantic import BaseModel, Field, field_validator
 from app.book import build_state
 from app.discovery import discover
 from app.store import JournalStore
+from app.watchlist import WatchlistStore
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = Path(__file__).resolve().parent / "static"
 DATA = ROOT / "data"
 SNAP_DIR = DATA / "snaps"
 LOG_DIR = DATA / "logs"
+QUOTES_DIR = DATA / "quotes"
+WATCHLIST_PATH = DATA / "watchlist.json"
+QUOTES_STALE_SECONDS = 15
 
 log = logging.getLogger("journal")
 
 app = FastAPI(title="Trading Journal")
 store = JournalStore(DATA / "journal.sqlite")
+watchlist = WatchlistStore(WATCHLIST_PATH)
+_last_watch_touch = 0.0
 supervisor = None
+
+
+class WatchlistOp(BaseModel):
+    op: str
+    symbol: str | None = None
 
 
 class NoteIn(BaseModel):
@@ -70,6 +81,7 @@ class Supervisor:
     def start(self) -> None:
         SNAP_DIR.mkdir(parents=True, exist_ok=True)
         LOG_DIR.mkdir(parents=True, exist_ok=True)
+        QUOTES_DIR.mkdir(parents=True, exist_ok=True)
         self._thread.start()
 
     def stop(self) -> None:
@@ -115,6 +127,8 @@ class Supervisor:
                 terminal["path"],
                 str(SNAP_DIR / f"{terminal['id']}.json"),
                 terminal["label"],
+                str(QUOTES_DIR / f"{terminal['id']}.json"),
+                str(WATCHLIST_PATH),
             ],
             cwd=str(ROOT),
             stdout=handle,
@@ -156,6 +170,61 @@ def shutdown() -> None:
 @app.get("/api/state")
 def state() -> dict:
     return build_state(discover(), _snapshots(), store.all_notes(), time.time())
+
+
+def _touch_watch() -> None:
+    """Tell the terminal workers a page is watching prices, so they refresh every second instead of every few."""
+    global _last_watch_touch
+    moment = time.monotonic()
+    if moment - _last_watch_touch < 1.0:
+        return
+    _last_watch_touch = moment
+    try:
+        QUOTES_DIR.mkdir(parents=True, exist_ok=True)
+        (QUOTES_DIR / ".watching").touch()
+    except OSError:
+        pass
+
+
+@app.get("/api/quotes")
+def quotes() -> dict:
+    _touch_watch()
+    now = time.time()
+    terminals = []
+    if QUOTES_DIR.exists():
+        for path in sorted(QUOTES_DIR.glob("*.json")):
+            try:
+                snap = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            fresh = now - float(snap.get("updated_at") or 0) <= QUOTES_STALE_SECONDS
+            connected = bool(snap.get("connected")) and fresh
+            terminals.append(
+                {
+                    "id": path.stem,
+                    "label": snap.get("label") or path.stem,
+                    "connected": connected,
+                    "error": None if connected else (snap.get("error") or "Prices stalled"),
+                    "updated_at": snap.get("updated_at"),
+                    "account": snap.get("account") if connected else None,
+                    "quotes": snap.get("quotes") or {} if connected else {},
+                    "missing": snap.get("missing") or [] if connected else [],
+                }
+            )
+    return {"as_of": now, "terminals": terminals}
+
+
+@app.get("/api/watchlist")
+def get_watchlist() -> dict:
+    return watchlist.get()
+
+
+@app.post("/api/watchlist")
+def change_watchlist(body: WatchlistOp) -> dict:
+    try:
+        return watchlist.apply(body.op, body.symbol)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.put("/api/notes/{login}/{position_id}")

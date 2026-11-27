@@ -81,7 +81,7 @@ let curveMode = localStorage.getItem("journal-cumulative-mode") === "percent" ? 
 
 // Every amount belongs to one visibility group. The eye button on a page flips that page's groups,
 // and Settings lets each group be flipped on its own.
-const HIDE_KEYS = ["balance", "pnl", "calendar", "charts", "review", "trades", "insights"];
+const HIDE_KEYS = ["balance", "pnl", "calendar", "charts", "review", "trades", "insights", "watchlist"];
 const HIDE_LABELS = {
   all: "all amounts",
   balance: "account balances",
@@ -91,11 +91,13 @@ const HIDE_LABELS = {
   review: "review statistics",
   trades: "trade amounts",
   insights: "insight amounts",
+  watchlist: "watchlist amounts",
 };
 const PAGE_KEYS = {
   overview: ["balance", "pnl", "calendar", "charts", "review"],
   log: ["trades"],
   insights: ["insights"],
+  watchlist: ["watchlist"],
   settings: ["balance"],
 };
 const MASK = "••••••";
@@ -185,6 +187,7 @@ function setHidden(keys, on) {
   renderTable();
   renderEditor();
   renderReview();
+  renderWatchlist();
 }
 function togglePage(page) {
   const keys = PAGE_KEYS[page] || [];
@@ -417,7 +420,8 @@ function renderAccountSwitch() {
     const buttons = [`<button type="button" class="switch-btn" data-account="all" aria-pressed="false">All accounts</button>`];
     for (const account of state.accounts) {
       const key = accountKey(account);
-      buttons.push(`<button type="button" class="switch-btn" data-account="${esc(key)}" aria-pressed="false">${esc(account.name || account.login)}</button>`);
+      const hint = [account.name, account.server].filter(Boolean).join(" · ");
+      buttons.push(`<button type="button" class="switch-btn" data-account="${esc(key)}" aria-pressed="false" title="${esc(hint)}" aria-label="${esc(`Account ${account.login}${account.name ? ` (${account.name})` : ""}`)}">${esc(account.login)}</button>`);
     }
     el.innerHTML = buttons.join("");
   }
@@ -429,15 +433,17 @@ function renderAccountSwitch() {
 }
 
 function pageName() {
-  return ["#log", "#insights", "#news", "#settings"].includes(location.hash) ? location.hash.slice(1) : "overview";
+  return ["#log", "#watchlist", "#insights", "#news", "#settings"].includes(location.hash) ? location.hash.slice(1) : "overview";
 }
 
 function showPage(name) {
   const log = name === "log";
   const settings = name === "settings";
   const insights = name === "insights";
-  $("page-overview").hidden = log || settings || insights;
+  const watchlist = name === "watchlist";
+  $("page-overview").hidden = log || settings || insights || watchlist;
   $("page-log").hidden = !log;
+  $("page-watchlist").hidden = !watchlist;
   $("page-insights").hidden = !insights;
   $("page-settings").hidden = !settings;
   document.querySelectorAll("#pages a, #settings-link").forEach((link) => {
@@ -452,7 +458,9 @@ function showPage(name) {
   }
   if (insights) renderInsights();
   if (settings) renderTerminals();
-  if (!log && !settings && !insights) {
+  if (watchlist) startWatch();
+  else stopWatch();
+  if (!log && !settings && !insights && !watchlist) {
     dashStamp = "";
     renderDashboard();
   }
@@ -1617,9 +1625,567 @@ async function refresh() {
     renderEditor();
     renderDashboard();
     renderReview();
+    renderWatchlist();
   } catch (error) {
     $("status").textContent = "Journal server is not responding";
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Watchlist: live prices for the symbols you trade.
+// The page polls /api/quotes only while it is on screen and the tab is visible; the server notices
+// the polling and tells the MetaTrader workers to quote once a second instead of idling.
+// ---------------------------------------------------------------------------------------------
+const WATCH_RATES = { fast: 1000, normal: 2000, relaxed: 5000 };
+const WATCH_SORTS = ["default", "symbol", "move", "pl"];
+const WATCH_QUIET_SECONDS = 90; // no new tick for this long reads as a quiet or closed market
+const WATCH_DELAYED_SECONDS = 8; // prices older than this are shown as delayed
+const WATCH_CONFIG_SECONDS = 10; // how often the shared pin/hide list is re-read
+const WATCH_SYMBOL = /^[A-Za-z0-9._#@&+!\-]{1,32}$/;
+const STAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l2.7 5.6 6.1.8-4.5 4.3 1.1 6.1L12 16.9 6.6 19.8l1.1-6.1L3.2 9.4l6.1-.8z"/></svg>';
+
+let watchRate = (() => {
+  try { const saved = localStorage.getItem("journal-watch-rate"); return saved in WATCH_RATES ? saved : "normal"; } catch (error) { return "normal"; }
+})();
+let watchSort = (() => {
+  try { const saved = localStorage.getItem("journal-watch-sort"); return WATCH_SORTS.includes(saved) ? saved : "default"; } catch (error) { return "default"; }
+})();
+let watchEdit = false;
+let watchConfig = { pinned: [], extra: [], hidden: [] };
+let watchConfigAt = 0;
+let watchData = null; // last /api/quotes answer
+let watchFailed = false;
+let watchTimer = 0;
+let watchBusy = false;
+let watchNoteTimer = 0;
+let watchSuggestKey = "";
+const watchRows = new Map(); // symbol -> { el, bid, ... }
+
+function cleanWatchConfig(raw) {
+  const out = { pinned: [], extra: [], hidden: [] };
+  for (const key of Object.keys(out)) {
+    if (raw && Array.isArray(raw[key])) out[key] = raw[key].filter((item) => typeof item === "string");
+  }
+  return out;
+}
+
+function watchActive() {
+  return pageName() === "watchlist" && !document.hidden;
+}
+function startWatch() {
+  clearTimeout(watchTimer);
+  if (!watchActive()) return;
+  pollWatch();
+}
+function stopWatch() {
+  clearTimeout(watchTimer);
+}
+async function loadWatchConfig() {
+  try {
+    const response = await fetch("/api/watchlist");
+    if (!response.ok) throw new Error(String(response.status));
+    watchConfig = cleanWatchConfig(await response.json());
+    watchConfigAt = Date.now();
+  } catch (error) {}
+}
+async function pollWatch() {
+  clearTimeout(watchTimer);
+  if (!watchActive()) return;
+  if (!watchBusy) {
+    watchBusy = true;
+    try {
+      if (Date.now() - watchConfigAt > WATCH_CONFIG_SECONDS * 1000) await loadWatchConfig();
+      const response = await fetch("/api/quotes", { cache: "no-store" });
+      if (!response.ok) throw new Error(String(response.status));
+      watchData = await response.json();
+      watchFailed = false;
+    } catch (error) {
+      watchFailed = true;
+    } finally {
+      watchBusy = false;
+    }
+    renderWatchlist();
+  }
+  if (watchActive()) watchTimer = setTimeout(pollWatch, WATCH_RATES[watchRate] || 2000);
+}
+
+// Terminals whose prices count for the account currently selected at the top of the page.
+function watchTerminals() {
+  const list = (watchData && watchData.terminals) || [];
+  return list.filter((terminal) => {
+    if (!terminal.connected) return false;
+    if (filters.account === "all") return true;
+    return terminal.account ? accountKey(terminal.account) === filters.account : false;
+  });
+}
+
+function watchModel() {
+  const trades = accountTrades();
+  const open = new Map();
+  const latest = new Map();
+  for (const trade of trades) {
+    if (!trade.symbol) continue;
+    const stamp = trade.close_time || trade.open_time || 0;
+    latest.set(trade.symbol, Math.max(latest.get(trade.symbol) || 0, stamp));
+    if (trade.status !== "open") continue;
+    const entry = open.get(trade.symbol) || { count: 0, long: 0, short: 0, volume: 0, byCurrency: new Map() };
+    entry.count += 1;
+    entry[trade.side === "short" ? "short" : "long"] += 1;
+    entry.volume += Number(trade.volume || 0);
+    const currency = trade.currency || "USD";
+    entry.byCurrency.set(currency, (entry.byCurrency.get(currency) || 0) + Number(trade.floating || 0));
+    open.set(trade.symbol, entry);
+  }
+  const hiddenSet = new Set(watchConfig.hidden);
+  const auto = new Set([...open.keys(), ...latest.keys()]);
+
+  const quotes = new Map();
+  const missing = new Set();
+  const answered = new Set();
+  for (const terminal of watchTerminals()) {
+    for (const symbol of terminal.missing || []) missing.add(symbol);
+    for (const [symbol, quote] of Object.entries(terminal.quotes || {})) {
+      answered.add(symbol);
+      const best = quotes.get(symbol);
+      const age = quote.quiet_for == null ? 0 : quote.quiet_for;
+      const bestAge = best ? (best.quiet_for == null ? 0 : best.quiet_for) : Infinity;
+      if (age < bestAge) quotes.set(symbol, quote);
+    }
+  }
+
+  const ordered = [];
+  const seen = new Set();
+  const add = (symbol) => {
+    if (!symbol || seen.has(symbol) || hiddenSet.has(symbol)) return;
+    seen.add(symbol);
+    ordered.push(symbol);
+  };
+  watchConfig.pinned.forEach(add);
+  [...open.keys()].forEach(add);
+  watchConfig.extra.forEach(add);
+  [...latest.entries()].sort((a, b) => b[1] - a[1]).map((item) => item[0]).forEach(add);
+  [...quotes.keys()].forEach(add);
+
+  const rows = ordered.slice(0, 80).map((symbol, index) => ({
+    symbol,
+    index,
+    pinned: watchConfig.pinned.includes(symbol),
+    auto: auto.has(symbol),
+    quote: quotes.get(symbol) || null,
+    missing: !quotes.has(symbol) && missing.has(symbol),
+    position: open.get(symbol) || null,
+  }));
+  const movePct = (row) => (row.quote && row.quote.change_pct != null ? Math.abs(row.quote.change_pct) : -1);
+  const plTotal = (row) => (row.position ? [...row.position.byCurrency.values()].reduce((sum, value) => sum + value, 0) : -Infinity);
+  const compare = {
+    default: (a, b) => a.index - b.index,
+    symbol: (a, b) => a.symbol.localeCompare(b.symbol, undefined, { sensitivity: "base" }),
+    move: (a, b) => movePct(b) - movePct(a) || a.index - b.index,
+    pl: (a, b) => plTotal(b) - plTotal(a) || a.index - b.index,
+  }[watchSort] || ((a, b) => a.index - b.index);
+  const pinnedRows = rows.filter((row) => row.pinned).sort((a, b) => watchConfig.pinned.indexOf(a.symbol) - watchConfig.pinned.indexOf(b.symbol));
+  const rest = rows.filter((row) => !row.pinned).sort(compare);
+  return [...pinnedRows, ...rest];
+}
+
+function watchPrice(value, digits) {
+  if (value == null || !(Number(value) > 0)) return "—";
+  const d = Math.max(0, Math.min(8, Number(digits) || 0));
+  return Number(value).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+function watchQuietText(seconds) {
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
+}
+
+function sparkPoints(spark, price) {
+  const values = spark.slice();
+  if (price > 0 && values.length) values[values.length - 1] = price;
+  if (values.length < 2) return "";
+  const low = Math.min(...values);
+  const high = Math.max(...values);
+  const span = high - low || 1;
+  return values
+    .map((value, index) => {
+      const x = (index / (values.length - 1)) * 96;
+      const y = high === low ? 14 : 25 - ((value - low) / span) * 22;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
+function newWatchRow(symbol) {
+  const el = document.createElement("div");
+  el.className = "watch-row";
+  el.setAttribute("role", "listitem");
+  el.dataset.symbol = symbol;
+  el.innerHTML = `
+    <div class="w-sym">
+      <button type="button" class="w-name"><b></b><small></small></button>
+      <span class="w-pos" hidden></span>
+    </div>
+    <svg class="w-spark" viewBox="0 0 96 28" preserveAspectRatio="none" aria-hidden="true"><polyline points=""/></svg>
+    <div class="w-cell w-bid"><span class="w-label">Bid</span><b>—</b></div>
+    <div class="w-cell w-ask"><span class="w-label">Ask</span><b>—</b></div>
+    <div class="w-cell w-spread"><span class="w-label">Spread</span><b>—</b></div>
+    <div class="w-cell w-chg"><span class="w-label">Day</span><b>—</b><small></small></div>
+    <div class="w-cell w-range"><span class="w-label">Range</span><span class="w-track"><i></i></span><small><span></span><span></span></small></div>
+    <div class="w-cell w-pl"><span class="w-label">Open P/L</span><b></b></div>
+    <div class="w-act"></div>
+    <div class="w-msg" hidden></div>`;
+  const row = {
+    el,
+    bid: null,
+    actKey: "",
+    refs: {
+      name: el.querySelector(".w-name b"),
+      desc: el.querySelector(".w-name small"),
+      pos: el.querySelector(".w-pos"),
+      spark: el.querySelector(".w-spark polyline"),
+      bid: el.querySelector(".w-bid"),
+      ask: el.querySelector(".w-ask"),
+      spread: el.querySelector(".w-spread b"),
+      chg: el.querySelector(".w-chg"),
+      range: el.querySelector(".w-range"),
+      pl: el.querySelector(".w-pl"),
+      act: el.querySelector(".w-act"),
+      msg: el.querySelector(".w-msg"),
+    },
+  };
+  row.refs.name.textContent = symbol;
+  return row;
+}
+
+function flashCell(cell, direction) {
+  cell.classList.remove("up", "down");
+  void cell.offsetWidth; // restart the animation
+  cell.classList.add(direction);
+}
+
+function setCell(cell, text) {
+  const b = cell.querySelector("b");
+  if (b.textContent !== text) b.textContent = text;
+}
+
+function updateWatchRow(row, data, isFirst, isLast) {
+  const { el, refs } = row;
+  const quote = data.quote;
+  const pinnedEdit = data.pinned;
+  el.dataset.pinned = data.pinned ? "1" : "0";
+  const state = quote ? (quote.quiet_for != null && quote.quiet_for >= WATCH_QUIET_SECONDS ? "quiet" : "live") : data.missing ? "none" : "wait";
+  if (el.dataset.state !== state) el.dataset.state = state;
+
+  const description = quote ? quote.description || quote.group || "" : "";
+  if (refs.desc.textContent !== description) refs.desc.textContent = description;
+
+  // Position badge
+  const position = data.position;
+  if (position) {
+    const side = position.short === 0 ? "Long" : position.long === 0 ? "Short" : "";
+    const volume = `${Number(position.volume.toFixed(2))}`;
+    const text = side ? `${side} ${volume}` : `${position.count} open`;
+    refs.pos.hidden = false;
+    refs.pos.textContent = text;
+    refs.pos.dataset.side = side ? side.toLowerCase() : "mixed";
+    refs.pos.title = `${position.count} open position${position.count === 1 ? "" : "s"} · ${position.volume.toFixed(2)} lots`;
+  } else {
+    refs.pos.hidden = true;
+  }
+
+  // Open P/L
+  const plCell = refs.pl;
+  plCell.dataset.has = position ? "1" : "0";
+  if (position) {
+    const parts = [...position.byCurrency.entries()];
+    const text = parts.map(([currency, value]) => amount("watchlist", value, currency)).join(" · ");
+    const total = parts.reduce((sum, [, value]) => sum + value, 0);
+    const css = hidden.has("watchlist") ? "" : tone(total);
+    const b = plCell.querySelector("b");
+    if (b.textContent !== text) b.textContent = text;
+    b.className = css;
+  } else {
+    const b = plCell.querySelector("b");
+    b.textContent = "—";
+    b.className = "";
+  }
+
+  // Message rows
+  if (state === "wait" || state === "none") {
+    refs.msg.hidden = false;
+    refs.msg.textContent = state === "none"
+      ? "Not available on this account. Check the symbol name in the terminal's Market Watch."
+      : "Waiting for prices…";
+    ["bid", "ask"].forEach((key) => setCell(refs[key], "—"));
+    refs.spread.textContent = "—";
+    refs.chg.querySelector("b").textContent = "—";
+    refs.chg.querySelector("b").className = "";
+    refs.chg.querySelector("small").textContent = "";
+    refs.spark.setAttribute("points", "");
+    refs.range.dataset.has = "0";
+    row.bid = null;
+  } else {
+    const digits = quote.digits;
+    const quiet = state === "quiet";
+    refs.msg.hidden = !quiet;
+    if (quiet) refs.msg.textContent = `No new price for ${watchQuietText(quote.quiet_for)}. The market may be closed.`;
+    setCell(refs.bid, watchPrice(quote.bid || quote.price, digits));
+    setCell(refs.ask, watchPrice(quote.ask, digits));
+    refs.spread.textContent = quote.spread == null ? "—" : String(quote.spread);
+    if (row.bid != null && quote.bid !== row.bid) {
+      const direction = quote.bid > row.bid ? "up" : "down";
+      flashCell(refs.bid, direction);
+      flashCell(refs.ask, direction);
+    }
+    row.bid = quote.bid;
+
+    const pct = quote.change_pct;
+    const chgB = refs.chg.querySelector("b");
+    chgB.textContent = pct == null ? "—" : signedPct(pct);
+    chgB.className = pct == null ? "" : tone(pct);
+    refs.chg.querySelector("small").textContent = quote.change == null ? "" : `${quote.change < 0 ? "−" : "+"}${watchPrice(Math.abs(quote.change), digits).replace(/^—$/, "0")}`;
+
+    // 24h sparkline
+    const points = sparkPoints(quote.spark || [], quote.price);
+    refs.spark.setAttribute("points", points);
+    const first = (quote.spark || [])[0];
+    refs.spark.parentNode.dataset.dir = !points ? "" : quote.price >= first ? "up" : "down";
+
+    // Day range with a marker at the current price
+    const low = quote.day_low, high = quote.day_high;
+    if (low != null && high != null && high > 0) {
+      const lo = Math.min(low, quote.price || low);
+      const hi = Math.max(high, quote.price || high);
+      const at = hi > lo ? ((quote.price - lo) / (hi - lo)) * 100 : 50;
+      refs.range.dataset.has = "1";
+      refs.range.querySelector("i").style.left = `${Math.max(0, Math.min(100, at)).toFixed(1)}%`;
+      const labels = refs.range.querySelectorAll("small span");
+      labels[0].textContent = watchPrice(lo, digits);
+      labels[1].textContent = watchPrice(hi, digits);
+      refs.range.title = `Today's range ${watchPrice(lo, digits)} – ${watchPrice(hi, digits)}`;
+    } else {
+      refs.range.dataset.has = "0";
+    }
+  }
+
+  // Row actions
+  const key = [watchEdit, data.pinned, data.auto, isFirst, isLast].join();
+  if (row.actKey !== key) {
+    row.actKey = key;
+    const star = `<button type="button" class="w-btn w-star${data.pinned ? " on" : ""}" data-w="${data.pinned ? "unpin" : "pin"}" aria-pressed="${data.pinned}" aria-label="${data.pinned ? "Unpin" : "Pin"} ${esc(data.symbol)}" title="${data.pinned ? "Unpin" : "Pin to top"}">${STAR}</button>`;
+    let extra = "";
+    if (watchEdit) {
+      if (data.pinned && watchSort === "default") {
+        extra += `<button type="button" class="w-btn" data-w="up" ${isFirst ? "disabled" : ""} aria-label="Move ${esc(data.symbol)} up" title="Move up">▲</button>`;
+        extra += `<button type="button" class="w-btn" data-w="down" ${isLast ? "disabled" : ""} aria-label="Move ${esc(data.symbol)} down" title="Move down">▼</button>`;
+      }
+      extra += data.auto
+        ? `<button type="button" class="w-btn w-text" data-w="hide" aria-label="Hide ${esc(data.symbol)}">Hide</button>`
+        : `<button type="button" class="w-btn w-text" data-w="remove" aria-label="Remove ${esc(data.symbol)}">Remove</button>`;
+    }
+    refs.act.innerHTML = extra + star;
+  }
+}
+
+function renderWatchlist() {
+  const page = $("page-watchlist");
+  if (!page || page.hidden) return;
+  const list = $("watch-list");
+  const model = watchModel();
+
+  // Live indicator
+  const live = $("watch-live");
+  const terminals = watchTerminals();
+  let liveState = "wait";
+  let text = "Connecting…";
+  if (watchFailed) {
+    liveState = "off";
+    text = "Journal server is not responding";
+  } else if (watchData) {
+    if (!terminals.length) {
+      liveState = "off";
+      text = (watchData.terminals || []).some((terminal) => terminal.connected) ? "No terminal for this account" : "No terminal connected";
+    } else {
+      const freshest = Math.min(...terminals.map((terminal) => (watchData.as_of || 0) - (terminal.updated_at || 0)));
+      if (freshest > WATCH_DELAYED_SECONDS) {
+        liveState = "slow";
+        text = `Delayed · ${Math.round(freshest)}s old`;
+      } else {
+        liveState = "live";
+        text = `Live · every ${WATCH_RATES[watchRate] / 1000}s`;
+      }
+    }
+  }
+  if (live.dataset.state !== liveState) live.dataset.state = liveState;
+  const label = live.querySelector("span");
+  if (label.textContent !== text) label.textContent = text;
+  list.dataset.stale = watchFailed ? "1" : "0";
+
+  // Rows (keyed, so a price tick never rebuilds the DOM)
+  const keep = new Set(model.map((row) => row.symbol));
+  for (const [symbol, row] of watchRows) {
+    if (!keep.has(symbol)) {
+      row.el.remove();
+      watchRows.delete(symbol);
+    }
+  }
+  const pinnedOrder = model.filter((row) => row.pinned).map((row) => row.symbol);
+  let cursor = list.firstElementChild;
+  for (const data of model) {
+    let row = watchRows.get(data.symbol);
+    if (!row) {
+      row = newWatchRow(data.symbol);
+      watchRows.set(data.symbol, row);
+    }
+    const at = pinnedOrder.indexOf(data.symbol);
+    updateWatchRow(row, data, at === 0, at === pinnedOrder.length - 1);
+    if (row.el === cursor) cursor = cursor.nextElementSibling;
+    else list.insertBefore(row.el, cursor);
+  }
+  list.dataset.edit = watchEdit ? "1" : "0";
+  page.querySelector(".watch-panel").dataset.edit = watchEdit ? "1" : "0";
+  $("watch-empty").hidden = model.length > 0 || !watchData;
+
+  // Hidden symbols, so they can be brought back
+  const hiddenBox = $("watch-hidden");
+  const hiddenList = watchConfig.hidden;
+  const hiddenKey = hiddenList.join("|");
+  if (hiddenBox.dataset.key !== hiddenKey) {
+    hiddenBox.dataset.key = hiddenKey;
+    hiddenBox.hidden = hiddenList.length === 0;
+    hiddenBox.innerHTML = hiddenList.length
+      ? `<span>Hidden</span>${hiddenList.map((symbol) => `<button type="button" data-restore="${esc(symbol)}" title="Show ${esc(symbol)} again">${esc(symbol)} <i aria-hidden="true">+</i></button>`).join("")}<button type="button" class="w-text" data-restore-all="1">Show all</button>`
+      : "";
+  }
+
+  // Suggestions for the add box: every symbol seen in your trades that is not already listed
+  const suggest = [...new Set(accountTrades().map((trade) => trade.symbol).filter(Boolean))]
+    .filter((symbol) => !keep.has(symbol))
+    .sort();
+  const suggestKey = suggest.join("|");
+  if (suggestKey !== watchSuggestKey) {
+    watchSuggestKey = suggestKey;
+    $("watch-symbols").innerHTML = suggest.map((symbol) => `<option value="${esc(symbol)}"></option>`).join("");
+  }
+}
+
+function watchNote(text, bad) {
+  const note = $("watch-add-note");
+  note.textContent = text;
+  note.dataset.bad = bad ? "1" : "0";
+  clearTimeout(watchNoteTimer);
+  if (text) watchNoteTimer = setTimeout(() => { note.textContent = ""; }, 5000);
+}
+
+async function watchOp(op, symbol) {
+  try {
+    const response = await fetch("/api/watchlist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(symbol == null ? { op } : { op, symbol }),
+    });
+    if (!response.ok) {
+      let detail = String(response.status);
+      try { detail = (await response.json()).detail || detail; } catch (error) {}
+      throw new Error(detail);
+    }
+    watchConfig = cleanWatchConfig(await response.json());
+    watchConfigAt = Date.now();
+    renderWatchlist();
+    return true;
+  } catch (error) {
+    watchNote(`Could not update the watchlist: ${error.message}`, true);
+    return false;
+  }
+}
+
+function openSymbolTrades(symbol) {
+  filters.q = symbol;
+  filters.status = "all";
+  filters.day = "";
+  filters.range = "all";
+  $("search").value = symbol;
+  $("status-filter").value = "all";
+  $("range").value = "all";
+  tableStamp = "";
+  renderTable();
+  renderReview();
+  if (location.hash !== "#log") location.hash = "log";
+  else showPage("log");
+}
+
+function syncWatchControls() {
+  const rate = $("watch-rate");
+  if (rate) rate.value = watchRate;
+  const sort = $("watch-sort");
+  if (sort) sort.value = watchSort;
+  const edit = $("watch-edit");
+  if (edit) {
+    edit.textContent = watchEdit ? "Done" : "Edit";
+    edit.setAttribute("aria-pressed", watchEdit ? "true" : "false");
+    edit.classList.toggle("on", watchEdit);
+  }
+}
+
+function bindWatchlist() {
+  syncWatchControls();
+  $("watch-rate").addEventListener("change", (event) => {
+    watchRate = event.target.value in WATCH_RATES ? event.target.value : "normal";
+    try { localStorage.setItem("journal-watch-rate", watchRate); } catch (error) {}
+    renderWatchlist();
+    if (watchActive()) startWatch();
+  });
+  $("watch-sort").addEventListener("change", (event) => {
+    watchSort = WATCH_SORTS.includes(event.target.value) ? event.target.value : "default";
+    try { localStorage.setItem("journal-watch-sort", watchSort); } catch (error) {}
+    for (const row of watchRows.values()) row.actKey = "";
+    renderWatchlist();
+  });
+  $("watch-edit").addEventListener("click", () => {
+    watchEdit = !watchEdit;
+    syncWatchControls();
+    renderWatchlist();
+  });
+  $("watch-list").addEventListener("click", (event) => {
+    const rowEl = event.target.closest(".watch-row");
+    if (!rowEl) return;
+    const action = event.target.closest("[data-w]");
+    if (action) {
+      if (!action.disabled) watchOp(action.dataset.w, rowEl.dataset.symbol);
+      return;
+    }
+    if (!watchEdit) openSymbolTrades(rowEl.dataset.symbol);
+  });
+  $("watch-hidden").addEventListener("click", (event) => {
+    const one = event.target.closest("[data-restore]");
+    if (one) return void watchOp("show", one.dataset.restore);
+    if (event.target.closest("[data-restore-all]")) watchOp("show_all");
+  });
+  $("watch-add").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const input = $("watch-symbol");
+    const symbol = input.value.trim();
+    if (!symbol) return;
+    if (!WATCH_SYMBOL.test(symbol)) {
+      watchNote("Use the symbol name exactly as the terminal shows it, with no spaces.", true);
+      return;
+    }
+    const shown = [...watchRows.keys()].find((name) => name.toLowerCase() === symbol.toLowerCase());
+    if (shown) {
+      watchNote(`${shown} is already on the list.`, false);
+      input.value = "";
+      return;
+    }
+    if (await watchOp("add", symbol)) {
+      input.value = "";
+      watchNote(`Added ${symbol}. Prices appear within a few seconds.`, false);
+      if (watchActive()) startWatch();
+    }
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) stopWatch();
+    else if (pageName() === "watchlist") startWatch();
+  });
 }
 
 function bind() {
@@ -1698,6 +2264,7 @@ function bind() {
     if (location.hash !== "#log") location.hash = "log";
     else showPage("log");
   });
+  bindWatchlist();
   window.addEventListener("hashchange", () => showPage(pageName()));
   // A fresh open of the app always starts on Overview, even if the browser restored
   // an old #settings link. Reloading the same tab keeps the page you were on.
