@@ -14,10 +14,10 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=15" />
   <link rel="apple-touch-icon-precomposed" sizes="180x180" href="/apple-touch-icon.png?v=15" />
   <link rel="manifest" href="/manifest.webmanifest?v=15" />
-  <link rel="preload" href="/fonts/Inter-Regular.woff" as="font" type="font/woff" crossorigin />
   <script>
     (function () {
       var themes = { dracula: 1, desk: 1, nord: 1, aurora: 1, amoled: 1 };
+      var fonts = { manrope: "Manrope-Variable.woff2", jakarta: "PlusJakartaSans-Variable.woff2", plex: "IBMPlexSans-Regular.woff2", grotesk: "SpaceGrotesk-Variable.woff2", sora: "Sora-Variable.woff2", inter: "Inter-Regular.woff", system: "" };
       var theme = "dracula";
       var mode = "dark";
       try {
@@ -28,9 +28,19 @@
       } catch (error) {}
       document.documentElement.dataset.theme = theme;
       document.documentElement.dataset.mode = theme === "amoled" ? "dark" : mode;
+      var font = "manrope";
+      try { var savedFont = localStorage.getItem("journal-font"); if (Object.prototype.hasOwnProperty.call(fonts, savedFont)) font = savedFont; } catch (error) {}
+      document.documentElement.dataset.font = font;
+      if (fonts[font]) {
+        var preload = document.createElement("link");
+        preload.rel = "preload"; preload.as = "font"; preload.crossOrigin = "anonymous";
+        preload.type = fonts[font].slice(-5) === ".woff" ? "font/woff" : "font/woff2";
+        preload.href = "/fonts/" + fonts[font];
+        document.head.appendChild(preload);
+      }
     })();
   </script>
-  <link rel="stylesheet" href="/styles.css?v=16" />
+  <link rel="stylesheet" href="/styles.css?v=21" />
 </head>
 <body>
   <div class="wrap">
@@ -59,6 +69,7 @@
       <button type="button" class="eye-btn" data-eye-page="overview"></button>
     </div>
     <section id="metrics" class="metrics" aria-label="Account totals"></section>
+    <div id="session-date" class="session-date"></div>
     <section class="session-panel" aria-label="Forex trading sessions">
       <div class="session-head"><div><h2>Market Sessions</h2><p class="sub">Live session hours · aligned to your local time</p></div><span id="session-market-status" class="session-market-status"></span></div>
       <div id="session-clocks" class="session-clocks"></div>
@@ -219,7 +230,7 @@
         <div class="settings-divider"></div>
         <div>
           <h2>Appearance</h2>
-          <p class="sub">Choose a theme and display mode for your journal.</p>
+          <p class="sub">Choose a theme, display mode and font for your journal.</p>
         </div>
         <div class="settings-row">
           <label for="theme-select">Theme</label>
@@ -229,6 +240,18 @@
             <option value="nord">Nord</option>
             <option value="aurora">Aurora</option>
             <option value="amoled">AMOLED Black</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <label for="font-select">Font</label>
+          <select id="font-select">
+            <option value="manrope">Manrope</option>
+            <option value="jakarta">Plus Jakarta Sans</option>
+            <option value="plex">IBM Plex Sans</option>
+            <option value="grotesk">Space Grotesk</option>
+            <option value="sora">Sora</option>
+            <option value="inter">Inter</option>
+            <option value="system">System default</option>
           </select>
         </div>
         <div class="settings-row">
@@ -278,6 +301,6 @@
       </section>
     </div>
   </div>
-  <script src="/app.js?v=22"></script>
+  <script src="/app.js?v=27"></script>
 </body>
 </html>

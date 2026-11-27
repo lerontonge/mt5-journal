@@ -1,9 +1,24 @@
+/* Font options (Settings > Appearance). A face is only downloaded when it is the selected font. */
+@font-face { font-family: "Manrope"; font-style: normal; font-weight: 200 800; font-display: swap; src: url("/fonts/Manrope-Variable.woff2") format("woff2"); }
+@font-face { font-family: "Plus Jakarta Sans"; font-style: normal; font-weight: 200 800; font-display: swap; src: url("/fonts/PlusJakartaSans-Variable.woff2") format("woff2"); }
+@font-face { font-family: "Space Grotesk"; font-style: normal; font-weight: 300 700; font-display: swap; src: url("/fonts/SpaceGrotesk-Variable.woff2") format("woff2"); }
+@font-face { font-family: "Sora"; font-style: normal; font-weight: 100 800; font-display: swap; src: url("/fonts/Sora-Variable.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 400; font-display: swap; src: url("/fonts/IBMPlexSans-Regular.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 500; font-display: swap; src: url("/fonts/IBMPlexSans-Medium.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 600; font-display: swap; src: url("/fonts/IBMPlexSans-SemiBold.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 700; font-display: swap; src: url("/fonts/IBMPlexSans-Bold.woff2") format("woff2"); }
 @font-face { font-family: "Inter"; font-style: normal; font-weight: 400; font-display: swap; src: url("/fonts/Inter-Regular.woff") format("woff"); }
 @font-face { font-family: "Inter"; font-style: normal; font-weight: 500; font-display: swap; src: url("/fonts/Inter-Medium.woff") format("woff"); }
 @font-face { font-family: "Inter"; font-style: normal; font-weight: 600; font-display: swap; src: url("/fonts/Inter-SemiBold.woff") format("woff"); }
 @font-face { font-family: "Inter"; font-style: normal; font-weight: 700; font-display: swap; src: url("/fonts/Inter-Bold.woff") format("woff"); }
 
-html { --font: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Roboto, Arial, sans-serif; }
+html { --font: "Manrope", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Roboto, Arial, sans-serif; }
+html[data-font="jakarta"] { --font: "Plus Jakarta Sans", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif; }
+html[data-font="plex"] { --font: "IBM Plex Sans", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif; }
+html[data-font="grotesk"] { --font: "Space Grotesk", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif; }
+html[data-font="sora"] { --font: "Sora", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif; }
+html[data-font="inter"] { --font: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Roboto, Arial, sans-serif; }
+html[data-font="system"] { --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Roboto, Arial, sans-serif; }
 
 :root,
 html[data-theme="dracula"][data-mode="dark"] {
@@ -143,22 +158,27 @@ html[data-theme="aurora"][data-mode="light"] {
   color-scheme: light;
 }
 
+html { --pre: #f0a92f; --post: #5aa9ff; }
+html[data-mode="light"] { --pre: #a05f00; --post: #1f62c4; }
 html[data-theme="amoled"] {
+  /* Neon on black: pure-black canvas, vivid colours that glow against it. */
   --bg: #000000;
-  --paper: #09090b;
-  --paper-2: #131316;
-  --line: #232329;
-  --ink: #ededf2;
-  --muted: #8d8da0;
-  --brass: #bd93f9;
-  --brass-dim: #5b4890;
-  --gain: #50fa7b;
-  --loss: #ff5555;
-  --open: #8be9fd;
-  --growth: #8be9fd;
+  --paper: #070709;
+  --paper-2: #101014;
+  --line: #26262f;
+  --ink: #f4f4fb;
+  --muted: #9b9bb2;
+  --brass: #ff3fd8;
+  --brass-dim: #7d2070;
+  --gain: #2dff8f;
+  --loss: #ff5473;
+  --open: #22e1ff;
+  --growth: #22e1ff;
   --on-ink: #000000;
-  --glow: transparent;
+  --glow: rgba(255, 63, 216, 0.10);
   color-scheme: dark;
+  --pre: #ffb81c;
+  --post: #3d9bff;
 }
 
 * { box-sizing: border-box; }
@@ -171,6 +191,7 @@ body {
   color: var(--ink);
   font: 14px/1.45 var(--font);
   -webkit-font-smoothing: antialiased;
+  font-variant-numeric: tabular-nums;
 }
 
 .wrap { max-width: 1240px; margin: 0 auto; padding: 32px 28px 72px; }
@@ -296,9 +317,23 @@ button.day .p { font-size: 12px; font-weight: 600; }
 button.day .c { color: var(--muted); font-size: 11px; }
 button.day.gain { background: color-mix(in srgb, var(--gain) calc(var(--a, 0.28) * 100%), var(--paper-2)); }
 button.day.loss { background: color-mix(in srgb, var(--loss) calc(var(--a, 0.28) * 100%), var(--paper-2)); }
+/* AMOLED: neon-edged day cells. Dark fill, glowing edge, coloured figure; the strength follows the size of the day. */
+html[data-theme="amoled"] button.day.gain { --tone: var(--gain); }
+html[data-theme="amoled"] button.day.loss { --tone: var(--loss); }
+html[data-theme="amoled"] button.day.gain, html[data-theme="amoled"] button.day.loss {
+  background: color-mix(in srgb, var(--tone) calc(var(--a, 0.28) * 26%), var(--paper-2));
+  border: 1px solid color-mix(in srgb, var(--tone) calc(30% + var(--a, 0.28) * 70%), transparent);
+  --cell-glow: 0 0 calc(3px + var(--a, 0.28) * 14px) color-mix(in srgb, var(--tone) calc(var(--a, 0.28) * 55%), transparent);
+  box-shadow: var(--cell-glow);
+}
+html[data-theme="amoled"] button.day .p { color: var(--tone, var(--ink)); }
+html[data-theme="amoled"] button.day .d, html[data-theme="amoled"] button.day .c { color: color-mix(in srgb, var(--ink) 72%, transparent); }
+html[data-theme="amoled"] button.day:disabled .d { color: var(--muted); }
 button.day:disabled { opacity: 1; cursor: default; color: var(--ink); }
 button.day.today { box-shadow: inset 0 0 0 1px var(--brass); }
 button.day.selected { box-shadow: inset 0 0 0 2px var(--brass); }
+html[data-theme="amoled"] button.day.today { box-shadow: inset 0 0 0 1px var(--brass), var(--cell-glow, 0 0 #0000); }
+html[data-theme="amoled"] button.day.selected { box-shadow: inset 0 0 0 2px var(--brass), var(--cell-glow, 0 0 #0000); }
 .day-pad { min-height: 76px; }
 
 .chart { width: 100%; max-width: 100%; height: auto; display: block; }
@@ -578,31 +613,47 @@ tr.selected { background: color-mix(in srgb, var(--brass) 18%, var(--paper)); bo
 .session-head, .insights-heading, .news-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:10px; }
 .session-head h2, .insights-heading h2, .news-heading h2 { margin:0 0 3px; }
 .session-market-status { color:var(--muted); font-size:11px; }
-.session-clocks { position:relative; min-width:0; }
-.session-timeline, .session-row { display:grid; grid-template-columns:108px minmax(0,1fr); gap:10px; align-items:center; }
-.session-timeline { margin-bottom:5px; }
-.timeline-hours { display:grid; grid-template-columns:repeat(24,minmax(0,1fr)); color:var(--muted); font-size:9px; font-variant-numeric:tabular-nums; text-align:center; }
-.timeline-hours span:nth-child(odd) { opacity:.85; }
+.session-date { margin:18px 4px 0; color:var(--muted); font-size:13px; font-weight:600; letter-spacing:.01em; }
+.session-date + .session-panel { margin-top:8px; }
+.session-clocks { position:relative; min-width:0; padding-top:25px; }
+.session-panel { --lab:140px; --lab-gap:10px; }
+.session-row { display:grid; grid-template-columns:var(--lab) minmax(0,1fr); gap:var(--lab-gap); align-items:center; }
 .session-rows { display:grid; gap:6px; }
 .session-row { min-height:43px; }
 .session-city { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:1px 5px; min-width:0; }
 .session-city strong { font-size:12px; font-weight:700; }
 .session-city small { grid-column:1/-1; color:var(--muted); font-size:10px; white-space:nowrap; }
-.session-pill { border-radius:999px; padding:2px 6px; background:var(--paper-2); border:1px solid var(--line); font-size:9px; white-space:nowrap; }
-.session-pill.open { color:var(--gain); border-color:var(--gain); }
-.session-pill.pre-market, .session-pill.post-market { color:var(--brass); border-color:var(--brass); }
-.session-pill.weekend, .session-pill.holiday, .session-pill.closed { color:var(--muted); }
+.session-city small.note { white-space:normal; line-height:1.25; }
+.session-city small.early { color:var(--pre); }
+.session-pill { border-radius:999px; padding:2px 7px 2px 6px; background:color-mix(in srgb, currentColor 12%, var(--paper-2)); border:1px solid color-mix(in srgb, currentColor 55%, var(--line)); color:var(--muted); font-size:9px; font-weight:600; white-space:nowrap; }
+.session-pill::before { content:""; display:inline-block; width:5px; height:5px; margin-right:4px; border-radius:50%; background:currentColor; vertical-align:1px; }
+.session-pill.open { color:var(--gain); }
+.session-pill.pre-market { color:var(--pre); }
+.session-pill.post-market { color:var(--post); }
+.session-pill.closed { color:var(--loss); }
+.session-pill.weekend, .session-pill.holiday { color:var(--muted); }
 .session-track { position:relative; height:29px; overflow:hidden; border:1px solid var(--line); border-radius:6px; background-color:var(--paper-2); background-image:linear-gradient(to right,var(--line) 1px,transparent 1px); background-size:calc(100% / 24) 100%; }
 .session-bar { position:absolute; top:5px; height:17px; border-radius:4px; opacity:.9; }
+/* Pre-market / post-market windows are hatched; the open window is solid; a closed market is dimmed. */
+.session-bar.ext { opacity:.5; }
+.session-bar.ext::after { content:""; position:absolute; inset:0; border-radius:inherit; background:repeating-linear-gradient(135deg, rgba(0,0,0,.5) 0 2px, transparent 2px 5px); }
+.session-track[data-state="pre-market"] .session-bar:not(.ext), .session-track[data-state="post-market"] .session-bar:not(.ext) { opacity:.5; }
+.session-track[data-state="pre-market"] .session-bar.pre, .session-track[data-state="post-market"] .session-bar.post { opacity:.95; }
+.session-track[data-state="closed"] .session-bar, .session-track[data-state="weekend"] .session-bar, .session-track[data-state="holiday"] .session-bar { opacity:.28; }
 .session-bar.asia, .legend-dot.asia { background:var(--brass); }
 .session-bar.london, .legend-dot.london { background:var(--open); }
 .session-bar.new-york, .legend-dot.new-york { background:var(--gain); }
-.session-now { position:absolute; z-index:2; top:22px; bottom:25px; width:1px; background:var(--brass); pointer-events:none; }
-.session-now span { position:absolute; top:-17px; left:0; transform:translateX(-50%); padding:2px 5px; border-radius:4px; background:var(--brass); color:#171717; font-size:8px; font-weight:800; letter-spacing:.04em; }
-.session-legend { display:flex; align-items:center; gap:13px; margin:9px 0 0 118px; color:var(--muted); font-size:10px; flex-wrap:wrap; }
+.session-body { position:relative; }
+.session-now { position:absolute; z-index:2; top:0; bottom:0; width:1px; background:var(--brass); pointer-events:none; }
+.session-now span { position:absolute; top:-22px; left:0; transform:translateX(-50%); padding:3px 7px; border-radius:5px; background:var(--brass); color:var(--on-ink); font-size:10px; font-weight:800; letter-spacing:.02em; line-height:1.2; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.session-legend { display:flex; align-items:center; gap:13px; margin:9px 0 0 calc(var(--lab) + var(--lab-gap)); color:var(--muted); font-size:10px; flex-wrap:wrap; }
 .session-legend span { display:inline-flex; align-items:center; gap:5px; }
 .legend-dot { width:7px; height:7px; border-radius:2px; display:inline-block; }
 .session-local-zone { margin-left:auto; }
+.session-key { margin-top:6px; }
+.key { display:inline-block; width:14px; height:7px; border-radius:2px; background:var(--muted); }
+.key-ext { opacity:.55; background:repeating-linear-gradient(135deg, var(--muted) 0 2px, transparent 2px 4px); }
+.key-closed { opacity:.28; }
 .insights-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
 .insight-card { min-width:0; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--paper-2); }
 .insight-card h3 { margin:0 0 14px; }
@@ -623,9 +674,7 @@ tr.selected { background: color-mix(in srgb, var(--brass) 18%, var(--paper)); bo
 .news-footnote { color:var(--muted); font-size:12px; margin:12px 0 0; }
 #settings-terminals { margin-top:8px; }
 @media (max-width:800px) {
-  .session-timeline, .session-row { grid-template-columns:88px minmax(0,1fr); gap:7px; }
-  .session-legend { margin-left:95px; gap:8px; }
-  .timeline-hours { font-size:8px; }
+  .session-legend { gap:8px; }
   .insights-grid { grid-template-columns:1fr; }
   .insight-wide { grid-column:auto; }
   .session-head, .insights-heading, .news-heading { align-items:flex-start; flex-direction:column; }
@@ -635,7 +684,6 @@ tr.selected { background: color-mix(in srgb, var(--brass) 18%, var(--paper)); bo
   .session-city strong { font-size:11px; }
   .session-city small { font-size:9px; }
   .session-legend { margin-left:0; }
-  .session-now { bottom:43px; }
   .insight-bar-row { grid-template-columns:76px minmax(30px,1fr) 62px; gap:6px; }
   .insight-label, .insight-value { font-size:10px; }
   .news-frame-wrap { min-height:520px; height:72vh; }
@@ -656,24 +704,35 @@ tr.selected { background: color-mix(in srgb, var(--brass) 18%, var(--paper)); bo
 .session-bar.gold, .legend-dot.gold { background:#d9a441; }
 .session-bar.nasdaq, .legend-dot.nasdaq { background:#579bff; }
 .session-bar.sp500, .legend-dot.sp500 { background:#a78bfa; }
-.session-legend { gap:9px; margin-left:118px; }
+html[data-theme="amoled"] .session-bar.gold, html[data-theme="amoled"] .legend-dot.gold { background:#ffb81c; }
+html[data-theme="amoled"] .session-bar.nasdaq, html[data-theme="amoled"] .legend-dot.nasdaq { background:#3d7bff; }
+html[data-theme="amoled"] .session-bar.sp500, html[data-theme="amoled"] .legend-dot.sp500 { background:#a855ff; }
+html[data-theme="amoled"] .session-track[data-state="open"] .session-bar:not(.ext) { opacity:1; }
+html[data-theme="amoled"] .session-bar.asia { box-shadow:0 0 10px color-mix(in srgb, var(--brass) 55%, transparent); }
+html[data-theme="amoled"] .session-bar.london { box-shadow:0 0 10px color-mix(in srgb, var(--open) 55%, transparent); }
+html[data-theme="amoled"] .session-bar.new-york { box-shadow:0 0 10px color-mix(in srgb, var(--gain) 55%, transparent); }
+html[data-theme="amoled"] .session-bar.gold { box-shadow:0 0 10px rgba(255,184,28,.55); }
+html[data-theme="amoled"] .session-bar.nasdaq { box-shadow:0 0 10px rgba(61,123,255,.55); }
+html[data-theme="amoled"] .session-bar.sp500 { box-shadow:0 0 10px rgba(168,85,255,.55); }
+/* Neon glow on the active pills. */
+html[data-theme="amoled"] .switch-btn.on, html[data-theme="amoled"] #pages a.on { box-shadow:0 0 14px color-mix(in srgb, var(--brass) 55%, transparent); }
+.session-legend { gap:9px; }
 @media (max-width: 900px) {
   .dash-grid { grid-template-columns:minmax(0,1fr); }
   .dash-charts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
-  .session-timeline, .session-row { grid-template-columns:100px minmax(0,1fr); gap:7px; }
-  .session-legend { margin-left:107px; }
+  .session-panel { --lab:120px; --lab-gap:7px; }
 }
 @media (max-width: 560px) {
   .dash-charts { grid-template-columns:minmax(0,1fr); }
-  .session-timeline, .session-row { grid-template-columns:88px minmax(0,1fr); gap:5px; }
+  .session-panel { --lab:84px; --lab-gap:6px; }
+  .session-city { grid-template-columns:minmax(0,1fr); justify-items:start; gap:3px; }
   .session-city strong { font-size:10px; }
   .session-pill { font-size:8px; padding:2px 4px; }
-  .timeline-hours { font-size:7px; }
   .session-legend { margin-left:0; }
 }
 
 /* 24/5 markets that are currently closed (weekend or holiday) */
-.session-bar.idle { opacity: .28; }
+
 button.switch-btn:disabled { opacity: .4; cursor: default; }
 
 .review-chart-card { margin:12px 0 16px; }

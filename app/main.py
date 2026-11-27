@@ -180,7 +180,7 @@ def script() -> FileResponse:
     return FileResponse(STATIC / "app.js")
 
 
-# Home-screen icons, web manifest and the bundled Inter font. Only these exact names are served.
+# Home-screen icons, web manifest and the bundled fonts. Only these exact names are served.
 ASSETS = {
     "icon.svg": "image/svg+xml",
     "icon-192.png": "image/png",
@@ -192,6 +192,14 @@ ASSETS = {
     "manifest.webmanifest": "application/manifest+json",
 }
 FONTS = {
+    "Manrope-Variable.woff2",
+    "PlusJakartaSans-Variable.woff2",
+    "SpaceGrotesk-Variable.woff2",
+    "Sora-Variable.woff2",
+    "IBMPlexSans-Regular.woff2",
+    "IBMPlexSans-Medium.woff2",
+    "IBMPlexSans-SemiBold.woff2",
+    "IBMPlexSans-Bold.woff2",
     "Inter-Regular.woff",
     "Inter-Medium.woff",
     "Inter-SemiBold.woff",
@@ -203,7 +211,8 @@ FONTS = {
 def font(name: str) -> FileResponse:
     if name not in FONTS:
         raise HTTPException(status_code=404, detail="Not found")
-    return FileResponse(STATIC / "fonts" / name, media_type="font/woff")
+    media_type = "font/woff2" if name.endswith(".woff2") else "font/woff"
+    return FileResponse(STATIC / "fonts" / name, media_type=media_type)
 
 
 # iOS looks for these names at the site root when a page is added to the Home Screen.

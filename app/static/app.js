@@ -45,6 +45,8 @@ function syncAppearance() {
   if (!select) return;
   const theme = document.documentElement.dataset.theme || "dracula";
   select.value = theme;
+  const fontSelect = $("font-select");
+  if (fontSelect) fontSelect.value = document.documentElement.dataset.font || "manrope";
   document.querySelectorAll("#mode-switch button").forEach((button) => {
     const on = button.dataset.mode === (document.documentElement.dataset.mode || "dark");
     button.classList.toggle("on", on);
@@ -64,6 +66,14 @@ function setAppearance(theme, mode) {
   syncAppearance();
   renderDashboard();
   renderReview();
+}
+// Font choice only restyles the page; the SVG charts inherit it, so nothing needs redrawing.
+const FONT_CHOICES = ["manrope", "jakarta", "plex", "grotesk", "sora", "inter", "system"];
+function setFont(font) {
+  if (!FONT_CHOICES.includes(font)) font = "manrope";
+  document.documentElement.dataset.font = font;
+  try { localStorage.setItem("journal-font", font); } catch (error) {}
+  syncAppearance();
 }
 let curveModel = null;
 let reviewStamp = "";
@@ -1328,7 +1338,8 @@ function breakdown(trades, keyFn) {
 
 
 const SESSION_DEFS = [
-  { name: "New York", zone: "America/New_York", open: 8, close: 17, city: "New York, USA", kind: "forex" },
+  // New York follows US stock-market hours: pre-market 4:00-9:30, regular 9:30-16:00, after-hours 16:00-20:00 (ET).
+  { name: "New York", zone: "America/New_York", open: 9.5, close: 16, city: "New York, USA", kind: "equity" },
   { name: "London", zone: "Europe/London", open: 8, close: 17, city: "London, UK", kind: "forex" },
   { name: "Asia · Tokyo", zone: "Asia/Tokyo", open: 9, close: 18, city: "Tokyo, Japan", kind: "forex" },
   // Gold, NASDAQ and S&P 500 trade 24/5 (Sunday 17:00 to Friday 17:00 New York), not on COMEX or cash-exchange hours.
@@ -1355,83 +1366,207 @@ function lastWeekday(year, monthIndex, weekday) {
   const last = new Date(Date.UTC(year, monthIndex + 1, 0));
   return last.getUTCDate() - ((last.getUTCDay() - weekday + 7) % 7);
 }
-function isMarketHoliday(parts, sessionName) {
-  const {year,month,day}=parts;
-  const dateKey=`${year}-${month}-${day}`;
-  const easter=easterSunday(year);
-  const goodFriday=new Date(easter.getTime()-2*86400000);
-  const easterMonday=new Date(easter.getTime()+86400000);
-  const key=(d)=>`${d.getUTCFullYear()}-${d.getUTCMonth()+1}-${d.getUTCDate()}`;
-  if (dateKey===`${year}-1-1` || dateKey===`${year}-12-25` || dateKey===`${year}-12-26` || dateKey===key(goodFriday)) return true;
-  if (sessionName === "New York") {
-    const usDates = [
-      `1-${nthWeekday(year,0,1,3)}`, `2-${nthWeekday(year,1,1,3)}`,
-      `5-${lastWeekday(year,4,1)}`, `6-19`, `7-4`,
-      `9-${nthWeekday(year,8,1,1)}`, `11-${nthWeekday(year,10,4,4)}`
-    ];
-    if (usDates.includes(`${month}-${day}`)) return true;
-  }
-  if (sessionName === "London") {
-    const ukDates = [`${easterMonday.getUTCMonth()+1}-${easterMonday.getUTCDate()}`, `5-${nthWeekday(year,4,1,1)}`, `5-${lastWeekday(year,4,1)}`, `8-${lastWeekday(year,7,1)}`];
-    if (ukDates.includes(`${month}-${day}`)) return true;
-  }
-  if (sessionName === "Asia · Tokyo" && (month===1&&day===1 || month===2&&day===11 || month===2&&day===23 || month===4&&day===29 || month===5&&[3,4,5].includes(day) || month===8&&day===11 || month===11&&day===3 || month===11&&day===23)) return true;
-  return false;
+// ---- Market calendars: exchange holidays and early closes (verified against published exchange calendars) ----
+const calendarCache = {};
+function weekdayOf(year, month, day) { return new Date(Date.UTC(year, month - 1, day)).getUTCDay(); }
+function calendarMap(name, year, build) {
+  const key = `${name}:${year}`;
+  if (!calendarCache[key]) { const map = {}; build((m, d, label) => { map[`${m}-${d}`] = label; }); calendarCache[key] = map; }
+  return calendarCache[key];
+}
+function easterOffset(year, days) {
+  const day = new Date(easterSunday(year).getTime() + days * 86400000);
+  return [day.getUTCMonth() + 1, day.getUTCDate()];
+}
+// NYSE / Nasdaq. A holiday on Saturday is observed on the Friday, on Sunday on the Monday
+// (except New Year's Day on a Saturday, which is not moved back into the old year).
+function nyseHolidays(year) {
+  return calendarMap("nyse", year, (add) => {
+    const observe = (m, d, label, skipSaturday) => {
+      const w = weekdayOf(year, m, d);
+      if (w === 6) { if (!skipSaturday) add(m, d - 1, label); }
+      else if (w === 0) add(m, d + 1, label);
+      else add(m, d, label);
+    };
+    observe(1, 1, "New Year's Day", true);
+    add(1, nthWeekday(year, 0, 1, 3), "Martin Luther King Jr. Day");
+    add(2, nthWeekday(year, 1, 1, 3), "Presidents' Day");
+    add(...easterOffset(year, -2), "Good Friday");
+    add(5, lastWeekday(year, 4, 1), "Memorial Day");
+    if (year >= 2022) observe(6, 19, "Juneteenth", false);
+    observe(7, 4, "Independence Day", false);
+    add(9, nthWeekday(year, 8, 1, 1), "Labor Day");
+    add(11, nthWeekday(year, 10, 4, 4), "Thanksgiving Day");
+    observe(12, 25, "Christmas Day", false);
+  });
+}
+// US stocks close at 13:00 ET the day after Thanksgiving, on Dec 24 and on Jul 3 (Monday to Thursday only).
+function nyseEarlyClose(parts) {
+  const { year, month, day } = parts;
+  if (nyseHolidays(year)[`${month}-${day}`]) return false;
+  const w = weekdayOf(year, month, day);
+  if (month === 11 && day === nthWeekday(year, 10, 4, 4) + 1) return true;
+  return (month === 12 || month === 7) && day === (month === 12 ? 24 : 3) && w >= 1 && w <= 4;
+}
+// UK bank holidays: weekend dates move to the next weekday (Christmas Day and Boxing Day to the 27th and 28th).
+function ukHolidays(year) {
+  return calendarMap("uk", year, (add) => {
+    const nextMonday = (m, d, label) => { const w = weekdayOf(year, m, d); add(m, d + (w === 6 ? 2 : w === 0 ? 1 : 0), label); };
+    nextMonday(1, 1, "New Year's Day");
+    add(...easterOffset(year, -2), "Good Friday");
+    add(...easterOffset(year, 1), "Easter Monday");
+    add(5, nthWeekday(year, 4, 1, 1), "Early May Bank Holiday");
+    add(5, lastWeekday(year, 4, 1), "Spring Bank Holiday");
+    add(8, lastWeekday(year, 7, 1), "Summer Bank Holiday");
+    const xmas = weekdayOf(year, 12, 25);
+    add(12, xmas === 6 || xmas === 0 ? 27 : 25, "Christmas Day");
+    const boxing = weekdayOf(year, 12, 26);
+    add(12, boxing === 6 || boxing === 0 ? 28 : 26, "Boxing Day");
+  });
+}
+// Tokyo Stock Exchange: Japanese national holidays (with substitute and citizens' holidays) plus the year-end/new-year closure.
+function tseHolidays(year) {
+  return calendarMap("tse", year, (add) => {
+    const eq = (base) => Math.floor(base + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4));
+    const national = {};
+    const set = (m, d, label) => { national[`${m}-${d}`] = label; };
+    set(1, 1, "New Year's Day");
+    set(1, nthWeekday(year, 0, 1, 2), "Coming of Age Day");
+    set(2, 11, "National Foundation Day");
+    if (year >= 2020) set(2, 23, "Emperor's Birthday");
+    set(3, eq(20.8431), "Vernal Equinox Day");
+    set(4, 29, "Showa Day");
+    set(5, 3, "Constitution Memorial Day");
+    set(5, 4, "Greenery Day");
+    set(5, 5, "Children's Day");
+    set(7, nthWeekday(year, 6, 1, 3), "Marine Day");
+    set(8, 11, "Mountain Day");
+    set(9, nthWeekday(year, 8, 1, 3), "Respect for the Aged Day");
+    set(9, eq(23.2488), "Autumnal Equinox Day");
+    set(10, nthWeekday(year, 9, 1, 2), "Sports Day");
+    set(11, 3, "Culture Day");
+    set(11, 23, "Labor Thanksgiving Day");
+    const result = { ...national };
+    const next = (m, d) => { const t = new Date(Date.UTC(year, m - 1, d + 1)); return [t.getUTCMonth() + 1, t.getUTCDate()]; };
+    // A national holiday on Sunday moves to the next day that is not already a holiday.
+    Object.keys(national).forEach((k) => {
+      const [m, d] = k.split("-").map(Number);
+      if (weekdayOf(year, m, d) !== 0) return;
+      let [nm, nd] = next(m, d);
+      while (national[`${nm}-${nd}`] || result[`${nm}-${nd}`]) [nm, nd] = next(nm, nd);
+      result[`${nm}-${nd}`] = "Substitute Holiday";
+    });
+    // A single weekday between two national holidays is a holiday too.
+    Object.keys(national).forEach((k) => {
+      const [m, d] = k.split("-").map(Number);
+      const [m2, d2] = next(m, d), [m3, d3] = next(m2, d2);
+      if (national[`${m3}-${d3}`] && !national[`${m2}-${d2}`] && !result[`${m2}-${d2}`] && weekdayOf(year, m2, d2) !== 0) result[`${m2}-${d2}`] = "Citizens' Holiday";
+    });
+    result["1-2"] = "New Year Holiday"; result["1-3"] = "New Year Holiday"; result["12-31"] = "Year-End Holiday";
+    Object.keys(result).forEach((k) => { const [m, d] = k.split("-").map(Number); add(m, d, result[k]); });
+  });
+}
+const MARKET_CALENDARS = { "New York": nyseHolidays, "London": ukHolidays, "Asia · Tokyo": tseHolidays };
+// Name of the holiday on this date in the market's own time zone, or null.
+function marketHoliday(def, parts) {
+  const calendar = MARKET_CALENDARS[def.name];
+  return calendar ? calendar(parts.year)[`${parts.month}-${parts.day}`] || null : null;
+}
+// Hours for one day: regular session plus pre-market and after-hours, with early closes applied.
+function sessionHours(def, parts) {
+  const hours = { open: def.open, close: def.close, ...extendedHours(def), early: false };
+  if (def.kind === "equity" && nyseEarlyClose(parts)) { hours.close = 13; hours.post = 17; hours.early = true; }
+  return hours;
+}
+function clockLabel(hour) {
+  const h = Math.floor(hour), m = Math.round((hour - h) * 60);
+  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
 }
 function forexWeekend(now) {
   const ny=zonedParts(now,"America/New_York");
   const minutes=ny.hour*60+ny.minute;
   return (ny.weekday==="Fri" && minutes>=17*60) || ny.weekday==="Sat" || (ny.weekday==="Sun" && minutes<17*60);
 }
+// Pre-market and post-market windows around a session (hours in the market's own time zone).
+function extendedHours(def) {
+  return def.kind === "equity" ? { pre: 4, post: 20 } : { pre: def.open - 1, post: def.close + 1 };
+}
 function sessionStatus(def, now) {
   const parts=zonedParts(now,def.zone);
-  if (forexWeekend(now)) return { status:"Weekend", parts };
+  // Stocks are closed all day Saturday and Sunday. Forex and the 24/5 CFDs close on Friday at 17:00 New York
+  // and reopen on Sunday night at 17:00 New York.
+  if (def.kind === "equity" ? (parts.weekday === "Sat" || parts.weekday === "Sun") : forexWeekend(now)) return { status:"Weekend", parts };
   if (def.kind === "cfd") {
     const closedDay = (parts.month === 1 && parts.day === 1) || (parts.month === 12 && parts.day === 25);
-    return { status: closedDay ? "Holiday" : "Open", parts };
+    return closedDay ? { status:"Holiday", parts, note: parts.month === 1 ? "New Year's Day" : "Christmas Day" } : { status:"Open", parts };
   }
-  if (isMarketHoliday(parts,def.name)) return { status:"Holiday", parts };
+  const holiday=marketHoliday(def,parts);
+  if (holiday) return { status:"Holiday", parts, note:holiday };
+  const hours=sessionHours(def,parts);
   const hour=parts.hour+parts.minute/60;
-  if (hour>=def.open && hour<def.close) return {status:"Open",parts};
-  const preOpen = def.kind === "equity" ? 4 : def.open - 1;
-  const postClose = def.kind === "equity" ? 20 : def.close + 1;
-  if (hour>=preOpen && hour<def.open) return {status:"Pre Market",parts};
-  if (hour>=def.close && hour<postClose) return {status:"Post Market",parts};
-  return {status:"Closed",parts};
+  const note = hours.early ? `Early close ${clockLabel(hours.close)}` : "";
+  const base = { parts, hours, note, early:hours.early };
+  if (hour>=hours.open && hour<hours.close) return {status:"Open",...base};
+  if (hour>=hours.pre && hour<hours.open) return {status:"Pre-Market",...base};
+  if (hour>=hours.close && hour<hours.post) return {status:"Post-Market",...base};
+  return {status:"Closed",...base};
 }
 function timezoneOffsetMinutes(date, zone) {
   const parts = new Intl.DateTimeFormat("en-US", { timeZone: zone, year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", second:"2-digit", hourCycle:"h23" }).formatToParts(date);
   const values={}; for (const part of parts) if(part.type!=="literal") values[part.type]=Number(part.value);
   return (Date.UTC(values.year,values.month-1,values.day,values.hour,values.minute,values.second)-date.getTime())/60000;
 }
+// When the forex market reopens (Sunday 17:00 New York) shown in the viewer's local time.
+function forexReopenText(now) {
+  const ny=zonedParts(now,"America/New_York");
+  const daysToSunday=ny.weekday==="Fri"?2:ny.weekday==="Sat"?1:0;
+  let target=new Date(now.getTime()+(daysToSunday*1440+17*60-(ny.hour*60+ny.minute))*60000);
+  const t=zonedParts(target,"America/New_York"); // correct for a daylight-saving change over the weekend
+  target=new Date(target.getTime()+(17*60-(t.hour*60+t.minute))*60000);
+  return new Intl.DateTimeFormat(undefined,{weekday:"short",hour:"numeric",minute:"2-digit",hour12:true}).format(target);
+}
 function renderSessionClocks() {
   const now=new Date();
   const openCount=SESSION_DEFS.filter(def=>sessionStatus(def,now).status==="Open").length;
   const localOffset=-now.getTimezoneOffset();
   const localHour=now.getHours()+now.getMinutes()/60;
+  const nowTime=new Intl.DateTimeFormat(undefined,{hour:"2-digit",minute:"2-digit",hour12:true}).format(now);
+  const dateLine=$("session-date");
+  if (dateLine) dateLine.textContent=new Intl.DateTimeFormat(undefined,{weekday:"long",month:"long",day:"numeric"}).format(now);
   const labelOffset=window.matchMedia("(max-width: 800px)").matches?95:118;
-  const hourLabels=Array.from({length:24},(_,i)=>`<span>${String(i).padStart(2,"0")}</span>`).join("");
-  $("session-market-status").textContent=forexWeekend(now)?"Forex market · Weekend closure":`${openCount} of ${SESSION_DEFS.length} markets open`;
+  $("session-market-status").textContent=forexWeekend(now)?`Forex market · Weekend closure · reopens ${forexReopenText(now)}`:`${openCount} of ${SESSION_DEFS.length} markets open`;
   const rows=SESSION_DEFS.map(def=>{
-    const {status}=sessionStatus(def,now);
+    const {status,parts,note,early}=sessionStatus(def,now);
     const zoneOffset=timezoneOffsetMinutes(now,def.zone);
     const shift=(localOffset-zoneOffset)/60;
-    let left=((def.open+shift)%24+24)%24;
-    let width=def.close-def.open;
-    const firstWidth=Math.min(width,24-left);
-    const secondWidth=width-firstWidth;
     const colorClass = def.name==="New York"?"new-york":def.name==="London"?"london":def.name==="Asia · Tokyo"?"asia":def.name.startsWith("Gold")?"gold":def.name==="NASDAQ"?"nasdaq":"sp500";
     const always = def.kind === "cfd";
+    // One segment of the 24h track; wraps past midnight into a second span.
+    const segment=(from,to,extra="",title="")=>{
+      const start=((from+shift)%24+24)%24, span=to-from, first=Math.min(span,24-start), second=span-first;
+      const cls=`session-bar ${colorClass}${extra?` ${extra}`:""}`, tip=title?` title="${title}"`:"";
+      return `<span class="${cls}"${tip} style="left:${start/24*100}%;width:${first/24*100}%"></span>`+(second>0?`<span class="${cls}"${tip} style="left:0;width:${second/24*100}%"></span>`:"");
+    };
+    const hours = sessionHours(def,parts);
     const bar = always
-      ? `<span class="session-bar ${colorClass}${status === "Open" ? "" : " idle"}" style="left:.4%;width:99.2%"></span>`
-      : `<span class="session-bar ${colorClass}" style="left:${left/24*100}%;width:${firstWidth/24*100}%"></span>${secondWidth>0?`<span class="session-bar ${colorClass}" style="left:0;width:${secondWidth/24*100}%"></span>`:""}`;
+      ? `<span class="session-bar ${colorClass}" style="left:.4%;width:99.2%"></span>`
+      : segment(hours.pre,hours.open,"ext pre","Pre-Market")+segment(hours.open,hours.close)+segment(hours.close,hours.post,"ext post","Post-Market");
+    const state=status.toLowerCase().replace(/\s+/g,"-");
     const time=new Intl.DateTimeFormat(undefined,{timeZone:def.zone,hour:"2-digit",minute:"2-digit",hour12:true}).format(now);
-    const date=new Intl.DateTimeFormat(undefined,{timeZone:def.zone,weekday:"short",month:"short",day:"numeric"}).format(now);
     const city=def.name==="Asia · Tokyo"?"Tokyo":def.name;
     const marketLabel = city;
-    return `<div class="session-row"><div class="session-city"><strong>${esc(marketLabel)}</strong><span class="session-pill ${status.toLowerCase().replace(/\s+/g,"-")}">${esc(status)}</span><small>${always ? "24/5 · Mon–Fri" : `${time} · ${date}`}</small></div><div class="session-track" aria-label="${esc(city)} session hours on a 24 hour local timeline">${bar}</div></div>`;
+    return `<div class="session-row"><div class="session-city"><strong>${esc(marketLabel)}</strong><span class="session-pill ${state}">${esc(status)}</span><small>${always ? "24/5 · Sun night–Fri" : time}</small>${note?`<small class="note${early?" early":""}">${esc(note)}</small>`:""}</div><div class="session-track" data-state="${state}" aria-label="${esc(city)} ${esc(status)}, session hours on a 24 hour local timeline">${bar}</div></div>`;
   }).join("");
-  $("session-clocks").innerHTML=`<div class="session-timeline"><div class="timeline-spacer"></div><div class="timeline-hours">${hourLabels}</div></div><div class="session-rows">${rows}</div><div class="session-now" style="left:calc(${localHour/24*100}% + ${labelOffset*(1-localHour/24)}px)" aria-hidden="true"><span>NOW</span></div><div class="session-legend"><span><i class="legend-dot asia"></i>Asia / Tokyo</span><span><i class="legend-dot london"></i>London</span><span><i class="legend-dot new-york"></i>New York</span><span><i class="legend-dot gold"></i>Gold</span><span><i class="legend-dot nasdaq"></i>NASDAQ</span><span><i class="legend-dot sp500"></i>S&amp;P 500</span><span class="session-local-zone">${esc(Intl.DateTimeFormat().resolvedOptions().timeZone||"Local time")}</span></div>`;
+  $("session-clocks").innerHTML=`<div class="session-body"><div class="session-rows">${rows}</div><div class="session-now" style="left:calc(${localHour/24*100}% + ${labelOffset*(1-localHour/24)}px)" aria-hidden="true"><span>${esc(nowTime)}</span></div></div><div class="session-legend"><span><i class="legend-dot asia"></i>Asia / Tokyo</span><span><i class="legend-dot london"></i>London</span><span><i class="legend-dot new-york"></i>New York</span><span><i class="legend-dot gold"></i>Gold</span><span><i class="legend-dot nasdaq"></i>NASDAQ</span><span><i class="legend-dot sp500"></i>S&amp;P 500</span><span class="session-local-zone">${esc(Intl.DateTimeFormat().resolvedOptions().timeZone||"Local time")}</span></div><div class="session-legend session-key"><span><i class="key key-open"></i>Open</span><span><i class="key key-ext"></i>Pre-Market / Post-Market</span><span><i class="key key-closed"></i>Closed</span></div>`;
+  // Place the line from the real track position (column widths change with screen size) and keep the time tag inside the card.
+  const clocks=$("session-clocks"), body=clocks.querySelector(".session-body"), track=clocks.querySelector(".session-track"), line=clocks.querySelector(".session-now");
+  if (track && line && body && body.clientWidth) {
+    const frac=localHour/24, lineX=track.offsetLeft+track.offsetWidth*frac;
+    line.style.left=`${lineX.toFixed(1)}px`;
+    const tag=line.firstElementChild, half=tag.offsetWidth/2;
+    const center=Math.min(Math.max(lineX,half-8),body.clientWidth-half+8);
+    tag.style.left=`${(center-lineX).toFixed(1)}px`;
+  }
 }
 function sessionForTrade(unix) {
   const date=new Date(unix*1000);
@@ -1514,6 +1649,7 @@ function bind() {
   $("theme-select").addEventListener("change", (event) => {
     setAppearance(event.target.value, modePreference());
   });
+  $("font-select").addEventListener("change", (event) => setFont(event.target.value));
   $("mode-switch").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-mode]");
     if (!button || button.disabled) return;
